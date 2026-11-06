@@ -1,0 +1,61 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "qresearch"
+version = "0.1.0"
+description = "Количественная аналитика финансовых рынков для всех: статистика доходностей, риск-метрики, Монте-Карло и портфели в несколько строк кода"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Hebrbfb Vdhdiene" },
+]
+keywords = [
+    "quant", "quantitative-finance", "finance", "moex", "moscow-exchange",
+    "monte-carlo", "bootstrap", "var", "cvar", "drawdown", "portfolio",
+    "ofz", "russian-market", "risk", "analytics", "low-code",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: Financial :: Investment",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+]
+dependencies = [
+    "pandas>=1.5",
+    "numpy>=1.22",
+    "scipy>=1.8",
+    "matplotlib>=3.5",
+    "yfinance>=0.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7",
+    "build>=1.0",
+    "twine>=5",
+]
+
+[project.urls]
+Homepage = "https://github.com/artemcbrv-wq/qresearch"
+Repository = "https://github.com/artemcbrv-wq/qresearch"
+Changelog = "https://github.com/artemcbrv-wq/qresearch/blob/main/CHANGELOG.md"
+Issues = "https://github.com/artemcbrv-wq/qresearch/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/qresearch"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
