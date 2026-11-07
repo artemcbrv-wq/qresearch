@@ -38,6 +38,7 @@ dependencies = [
     "numpy>=1.22",
     "scipy>=1.8",
     "matplotlib>=3.5",
+    "statsmodels>=0.13",
 ]
 
 [project.optional-dependencies]

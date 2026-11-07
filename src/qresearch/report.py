@@ -56,7 +56,7 @@ def quick(x, plot: bool = True) -> pd.DataFrame:
     return out
 
 
-def report(x, days: int = 252, n_sims: int = 20_000, seed: int = 42,
+def report(x, days: int | None = None, n_sims: int = 20_000, seed: int = 42,
            block: int = 21, show_plots: bool = True) -> dict:
     """Полный отчёт: статистики, годовые доходности, диагностика, Монте-Карло, портфель и графики.
 

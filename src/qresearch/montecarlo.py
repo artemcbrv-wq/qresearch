@@ -5,6 +5,10 @@
    так сохраняется кластеризация волатильности;
 3. параметрический - генерируем дни из нормального N(mu, sigma).
 
+Число дней в смоделированном году по умолчанию берётся фактическое -
+сколько наблюдений в году у самого актива (например, 251 у индексов
+МосБиржи, 246 у индексов денежного рынка), а не круглые 252.
+
 Для каждого метода генератор создаётся заново с тем же seed, поэтому
 результаты воспроизводятся цифра в цифру.
 """
@@ -16,9 +20,22 @@ import pandas as pd
 from ._core import to_asset
 
 
-def monte_carlo(x, days: int = 252, n_sims: int = 20_000, seed: int = 42,
-                block: int = 21) -> dict:
-    """Три способа смоделировать ``days`` торговых дней года.
+def monte_carlo(x, days: int | None = None, n_sims: int = 20_000,
+                seed: int = 42, block: int = 21) -> dict:
+    """Три способа смоделировать год.
+
+    Параметры
+    ----------
+    days :
+        Число торговых дней в смоделированном году. ``None`` (по
+        умолчанию) - фактическое число наблюдений в году по истории
+        актива: ``round(opy)``.
+    n_sims :
+        Число симуляций на метод.
+    seed :
+        Сид генератора (воспроизводимость).
+    block :
+        Длина блока блочного бутстрепа, дней (21 - торговый месяц).
 
     Возвращает словарь: имя метода -> массив годовых доходностей
     (доля единицы) длиной ``n_sims``.
@@ -26,27 +43,28 @@ def monte_carlo(x, days: int = 252, n_sims: int = 20_000, seed: int = 42,
     a = to_asset(x)
     r = a.returns.to_numpy()
     n = len(r)
+    n_days = int(round(a.opy)) if days is None else int(days)
     out: dict = {}
 
-    # --- Метод 1: iid-бутстреп (дни независимо и с возвращением) ---
+    # --- Метод 1: iid-бутстреп (дни независимо и с возвращением) --- #
     rng = np.random.default_rng(seed)
-    idx = rng.integers(0, n, size=(n_sims, days))
+    idx = rng.integers(0, n, size=(n_sims, n_days))
     out["iid-бутстреп"] = np.prod(1 + r[idx], axis=1) - 1
 
-    # --- Метод 2: блочный бутстреп (цельные куски по block дней) ---
+    # --- Метод 2: блочный бутстреп (цельные куски по block дней) --- #
     rng = np.random.default_rng(seed)
     if n > block:
-        n_blocks = int(np.ceil(days / block))
+        n_blocks = int(np.ceil(n_days / block))
         starts = rng.integers(0, n - block, size=(n_sims, n_blocks))
         idx = starts[:, :, None] + np.arange(block)[None, None, :]
-        idx = idx.reshape(n_sims, n_blocks * block)[:, :days]
+        idx = idx.reshape(n_sims, n_blocks * block)[:, :n_days]
     else:  # история короткая, блоки не помещаются - откат к iid
-        idx = rng.integers(0, n, size=(n_sims, days))
+        idx = rng.integers(0, n, size=(n_sims, n_days))
     out[f"блочный бутстреп ({block} дн.)"] = np.prod(1 + r[idx], axis=1) - 1
 
-    # --- Метод 3: параметрическая нормальная симуляция N(mu, sigma) ---
+    # --- Метод 3: параметрическая нормальная симуляция N(mu, sigma) --- #
     rng = np.random.default_rng(seed)
-    sims = rng.normal(r.mean(), r.std(ddof=1), size=(n_sims, days))
+    sims = rng.normal(r.mean(), r.std(ddof=1), size=(n_sims, n_days))
     out["параметрический N(mu, sigma)"] = np.prod(1 + sims, axis=1) - 1
     return out
 
@@ -68,7 +86,7 @@ def mc_summary(sims) -> pd.Series:
     )
 
 
-def monte_carlo_table(x, days: int = 252, n_sims: int = 20_000,
+def monte_carlo_table(x, days: int | None = None, n_sims: int = 20_000,
                       seed: int = 42, block: int = 21) -> pd.DataFrame:
     """Сводная таблица Монте-Карло по всем трём методам."""
     sims = monte_carlo(x, days=days, n_sims=n_sims, seed=seed, block=block)

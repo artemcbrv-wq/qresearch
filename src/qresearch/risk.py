@@ -93,3 +93,29 @@ def rolling_vol(x, window: int = 63) -> pd.Series:
     out = (a.returns.rolling(window).std() * np.sqrt(a.opy) * 100).round(2)
     out.name = f"Волатильность ({window} дн.), %"
     return out
+
+
+def var_backtest(x, level: float = 95, method: str = "parametric") -> pd.Series:
+    """Бэктест VaR: сколько раз дневной убыток превысил VaR.
+
+    Сравнивает фактическое число превышений с ожидаемым
+    (``n * (1 - уровень/100)``). У хорошо откалиброванной модели факт
+    близок к ожидению: систематически больше - модель недооценивает
+    риск, сильно меньше - перестраховывается::
+
+        qr.var_backtest("SBER", level=95, method="parametric")
+    """
+    a = to_asset(x)
+    r = a.returns.to_numpy()
+    v = var(a, level=level, method=method)
+    breaches = int((r < v).sum())
+    expected = int(round(len(r) * (1 - level / 100)))
+    return pd.Series(
+        {
+            "VaR, %": round(v * 100, 2),
+            "Превышений (факт)": breaches,
+            "Ожидалось": expected,
+            "Доля превышений, %": round(breaches / len(r) * 100, 2),
+        },
+        name=a.name,
+    )

@@ -15,7 +15,8 @@
 Анализ одной командой (в любую функцию можно передавать тикеры напрямую):
     qr.quick("SBER")                     # ключевые метрики (таблица-картинка)
     qr.stats_table(["SBER", "GAZP"])     # все описательные статистики
-    qr.annual_table("IMOEX")             # доходности по годам
+    qr.full_stats_table(["SBER", "GAZP"]) # полная таблица: VaR, бэктест, p-value
+    qr.annual_table("IMOEX")             # доходности по годам (* - неполный год)
     qr.diagnostics("SBER")               # нормальность, кластеризация, стационарность
     qr.monte_carlo_table("SBER")         # Монте-Карло
     qr.report("SBER")                    # всё сразу + графики
@@ -25,11 +26,19 @@
     qr.volatility("SBER")    # годовая волатильность
     qr.sharpe("SBER")        # Шарп; ещё есть sortino, calmar
     qr.var("SBER", 95)       # VaR; ещё есть cvar, max_drawdown
+    qr.sharpe_vs("SBER", "IMOEX")   # Шарп относительно бенчмарка
+
+Сравнение двух инструментов:
+    df, corr = qr.compare_annual("SBER", "GAZP")  # годовые рядом + корреляция
+    qr.plot_table(df)                    # таблицу - картинкой
+
+Бэктест VaR (факт против ожидаемого):
+    qr.var_backtest("SBER", level=95, method="parametric")
 
 Таблицы и Монте-Карло картинками matplotlib:
     qr.quick(["SBER", "GAZP"])                     # метрики таблицей-картинкой
     qr.plot_table(qr.stats_table("SBER"))          # любой DataFrame таблицей
-    qr.plot_monte_carlo("SBER")                     # гистограмма симуляций года
+    qr.plot_monte_carlo("SBER")                     # симуляции года, 3 метода
 
 Риск и портфели:
     qr.var("SBER", level=95)             # VaR (доля единицы)
@@ -38,17 +47,19 @@
     p = qr.portfolio(["SBER", "GAZP"], weights=[0.7, 0.3])
     p.summary(); p.correlation(); p.risk_contribution(); p.min_variance()
 
-Графики:
+Графики (единый стиль; save=True сохраняет PNG в папку qr_plots):
     qr.plot_growth(["SBER", "GAZP"])     # база 100, лог-шкала
-    qr.plot_drawdown("SBER")             # просадки
+    qr.plot_drawdown("SBER")             # просадки с заливкой
     qr.plot_rolling_vol("SBER")          # скользящая волатильность
     qr.plot_histogram("SBER")            # гистограмма + нормаль + t
+    qr.plot_annual("SBER", save=True)    # годовые + распределение, PNG в qr_plots
 """
 from __future__ import annotations
 
 from ._core import Asset, ensure_list, to_asset
 from .data import INDEX_PRESETS, load, load_file, load_moex
 from .diagnostics import (
+    autocorrelation_test,
     diagnostics,
     normality_tests,
     stationarity_test,
@@ -69,15 +80,28 @@ from .plots import (
 )
 from .portfolio import Portfolio, portfolio
 from .report import quick, report
-from .risk import cvar, drawdown, drawdown_info, max_drawdown, rolling_vol, var
+from .risk import (
+    cvar,
+    drawdown,
+    drawdown_info,
+    max_drawdown,
+    rolling_vol,
+    var,
+    var_backtest,
+)
 from .stats import (
     annual_returns,
     annual_stats,
     annual_table,
     calmar,
     cagr,
+    compare_annual,
     daily_stats,
+    full_stats,
+    full_stats_table,
+    implied_rate,
     sharpe,
+    sharpe_vs,
     sortino,
     stats_table,
     volatility,
@@ -92,12 +116,14 @@ __all__ = [
     # статистики
     "daily_stats", "stats_table", "annual_returns", "annual_table",
     "annual_stats", "cagr", "volatility", "sharpe", "sortino", "calmar",
+    "full_stats", "full_stats_table", "compare_annual", "sharpe_vs",
+    "implied_rate",
     # риск
     "var", "cvar", "drawdown", "drawdown_info", "max_drawdown",
-    "rolling_vol",
+    "rolling_vol", "var_backtest",
     # диагностика
-    "normality_tests", "volatility_clustering_test", "stationarity_test",
-    "diagnostics",
+    "normality_tests", "autocorrelation_test",
+    "volatility_clustering_test", "stationarity_test", "diagnostics",
     # Монте-Карло
     "monte_carlo", "mc_summary", "monte_carlo_table",
     # портфели

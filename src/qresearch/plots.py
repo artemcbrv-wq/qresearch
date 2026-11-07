@@ -1,5 +1,19 @@
-"""Графики matplotlib: одна функция - один готовый рисунок."""
+"""Графики matplotlib в едином стиле: одна функция - один готовый рисунок.
+
+Крупные фигуры, сетка с alpha=0.35, палитра #1f77b4 / #2ca02c /
+#d62728, гистограммы с наложенными нормалью и t-распределением,
+просадки с заливкой, многопанельные компоновки.
+
+У каждого графика есть параметр ``save``:
+
+- ``save=None`` - только показать в ноутбуке (по умолчанию);
+- ``save=True`` - показать и сохранить PNG (dpi=150) в папку ``qr_plots``;
+- ``save="папка"`` - показать и сохранить в указанную папку;
+- ``save="файл.png"`` - показать и сохранить по точному пути.
+"""
 from __future__ import annotations
+
+import os
 
 import numpy as np
 import pandas as pd
@@ -10,150 +24,312 @@ from .montecarlo import monte_carlo as _monte_carlo
 from .risk import drawdown, rolling_vol
 from .stats import annual_returns
 
-_COLORS = ("tab:blue", "tab:green", "tab:orange", "tab:red", "tab:purple",
-           "tab:brown", "tab:pink", "tab:gray", "tab:olive", "tab:cyan")
+_COLORS = ("#1f77b4", "#2ca02c", "#6c757d", "#9467bd", "#d62728",
+           "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf")
+_FILL = "#a0d2eb"       # заливка под просадками
+_TREND = "#1768ac"      # блочный бутстреп на гистограммах Монте-Карло
 
 
-def _axes(figsize=(10, 4.5)):
+def _grid(ax):
+    """Сетка в едином стиле библиотеки."""
+    ax.grid(alpha=0.35)
+
+
+def _maybe_save(fig, save, stem: str) -> None:
+    """Сохраняет фигуру в PNG, если попросили (см. модуль docstring)."""
+    if not save:
+        return
+    if save is True:
+        os.makedirs("qr_plots", exist_ok=True)
+        path = os.path.join("qr_plots", stem + ".png")
+    else:
+        path = str(save)
+        if not path.endswith(".png"):
+            os.makedirs(path, exist_ok=True)
+            path = os.path.join(path, stem + ".png")
+        else:
+            folder = os.path.dirname(path)
+            if folder:
+                os.makedirs(folder, exist_ok=True)
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+
+
+def _stem(*names) -> str:
+    """Имя файла из имён активов: growth_SBER_GAZP."""
+    return "_".join(str(n) for n in names)
+
+
+def _safe(stem: str) -> str:
+    """Заменяет символы, недопустимые в именах файлов (для plot_table)."""
+    return "".join(c if (c.isalnum() or c in "-_") else "_" for c in stem)
+
+
+def plot_growth(x, log: bool = True, save=None):
+    """Накопленная динамика с базой 100 (лог-шкала по умолчанию).
+
+    Лог-шкала показывает процентные темпы роста: одинаковый наклон
+    линий означает одинаковую скорость роста в процентах.
+    """
     import matplotlib.pyplot as plt
 
-    _, ax = plt.subplots(figsize=figsize)
-    return ax
-
-
-def plot_growth(x, log: bool = True):
-    """Рост с базой 100; лог-шкала по умолчанию показывает процентные темпы."""
     assets = [to_asset(t) for t in ensure_list(x)]
-    ax = _axes()
+    fig, ax = plt.subplots(figsize=(12, 6))
     for i, a in enumerate(assets):
         p = a.prices
-        ax.plot(p.index, p / p.iloc[0] * 100,
-                color=_COLORS[i % len(_COLORS)], lw=1.2, label=a.name)
+        base = p / p.iloc[0] * 100
+        ax.plot(base.index, base.values,
+                color=_COLORS[i % len(_COLORS)], lw=1.6,
+                label=f"{a.name} (старт {p.index[0].date()})")
     if log:
         ax.set_yscale("log")
-    ax.set_title("Рост с базой 100 (лог-шкала)" if log else "Рост с базой 100")
-    ax.set_ylabel("База 100")
-    ax.grid(alpha=0.3)
-    ax.legend()
+    ax.set_ylabel("Значение, база = 100 на дату старта"
+                  + (" (лог-шкала)" if log else ""))
+    ax.set_title("Накопленная динамика (база 100)")
+    _grid(ax)
+    ax.legend(loc="upper left", fontsize=10)
+    _maybe_save(fig, save, "growth_" + _stem(*(a.name for a in assets)))
     return ax
 
 
-def plot_returns(x):
-    """Дневные доходности во времени."""
+def plot_returns(x, save=None):
+    """Дневные доходности во времени, %; по панели на актив.
+
+    По форме линии видно кластеризацию волатильности: спокойные
+    периоды чередуются с полосами больших движений.
+    """
+    import matplotlib.pyplot as plt
+
     assets = [to_asset(t) for t in ensure_list(x)]
-    ax = _axes()
-    for i, a in enumerate(assets):
+    n = len(assets)
+    if n == 1:
+        fig, ax = plt.subplots(figsize=(12, 5))
+        axes = [ax]
+    else:
+        fig, axes_all = plt.subplots(n, 1, figsize=(12, 3 * n + 1))
+        axes = list(axes_all)
+    for i, (ax, a) in enumerate(zip(axes, assets)):
         ax.plot(a.returns.index, a.returns * 100,
-                color=_COLORS[i % len(_COLORS)], lw=0.7, alpha=0.8, label=a.name)
-    ax.set_title("Дневные доходности, %")
-    ax.set_ylabel("%")
-    ax.grid(alpha=0.3)
-    ax.legend()
-    return ax
+                color=_COLORS[i % len(_COLORS)], lw=0.7)
+        ax.set_title(f"{a.name}, % за день")
+        ax.set_ylabel("Доходность, %")
+        _grid(ax)
+    fig.tight_layout()
+    _maybe_save(fig, save, "returns_" + _stem(*(a.name for a in assets)))
+    return axes[0] if n == 1 else fig
 
 
-def plot_histogram(x, bins: int = 80):
-    """Гистограмма дневных доходностей с наложенными нормалью и t-распределением."""
+def plot_histogram(x, bins: int = 120, save=None):
+    """Гистограмма дневных доходностей, %: нормаль пунктиром + t (MLE).
+
+    Ось X обрезана по перцентилям 0.1-99.9 с запасом 5%, чтобы хвост
+    не растягивал картинку; в заголовке видно, сколько точек попало
+    «вне оси». t-распределение подобрано методом максимального
+    правдоподобия и показывает тяжесть хвостов: у реальных рядов
+    пик острее и хвосты толще, чем у нормали.
+    """
+    import matplotlib.pyplot as plt
+
     a = to_asset(x)
-    r = a.returns.to_numpy()
-    ax = _axes()
-    ax.hist(r, bins=bins, density=True, color="tab:blue", alpha=0.5,
-            label="Фактические доходности")
-    grid = np.linspace(r.min(), r.max(), 400)
-    ax.plot(grid, _sps.norm.pdf(grid, r.mean(), r.std(ddof=1)),
-            "k--", lw=1.2, label="Нормальное распределение")
+    r = (a.returns * 100).to_numpy()
+    lo, hi = np.percentile(r, [0.1, 99.9])
+    pad = (hi - lo) * 0.05
+    lo, hi = lo - pad, hi + pad
+    outside = int(((r < lo) | (r > hi)).sum())
+
+    fig, ax = plt.subplots(figsize=(12, 5.5))
+    ax.hist(r, bins=bins, density=True, color=_COLORS[0], alpha=0.75,
+            label="Эмпирическое распределение")
+    xs = np.linspace(lo, hi, 600)
+    mu, sd = float(r.mean()), float(r.std(ddof=1))
+    ax.plot(xs, _sps.norm.pdf(xs, mu, sd), "k--", lw=1.5,
+            label="Нормальное")
     try:
-        df_t, loc_t, scale_t = _sps.t.fit(r)
-        ax.plot(grid, _sps.t.pdf(grid, df_t, loc_t, scale_t),
-                color="crimson", lw=1.2, label=f"t-распределение (df={df_t:.0f})")
-    except Exception:  # t.fit редкие сбои не должны ломать график
+        nu, loc, scale = _sps.t.fit(r)
+        ax.plot(xs, _sps.t.pdf(xs, nu, loc=loc, scale=scale),
+                color="#d62728", lw=1.8, label=f"Стьюдента (ν={nu:.1f})")
+    except Exception:  # редкие сбои t.fit не должны ломать график
         pass
-    ax.set_title(f"Гистограмма дневных доходностей: {a.name}")
-    ax.set_xlabel("Дневная доходность")
+    ax.set_xlim(lo, hi)
+    ax.set_title(f"{a.name} (дней: {len(r)}; вне оси: {outside})")
+    ax.set_xlabel("Дневная доходность, %")
     ax.set_ylabel("Плотность")
-    ax.grid(alpha=0.3)
-    ax.legend()
+    _grid(ax)
+    ax.legend(fontsize=9)
+    _maybe_save(fig, save, "histogram_" + a.name)
     return ax
 
 
-def plot_qq(x):
-    """QQ-график: квантили доходностей против нормального распределения."""
+def plot_qq(x, save=None):
+    """QQ-график против нормали: точки-квантили и пунктирная линия.
+
+    S-образные концы (точки выше прямой справа и ниже слева) означают
+    тяжёлые хвосты: экстремальные дни случаются чаще, чем предсказывает
+    нормальное распределение.
+    """
+    import matplotlib.pyplot as plt
+
     a = to_asset(x)
-    ax = _axes()
-    _sps.probplot(a.returns.to_numpy(), dist="norm", plot=ax)
-    ax.set_title(f"QQ-график против нормали: {a.name}")
-    ax.get_lines()[0].set(markersize=3, color="tab:blue",
-                          label="Квантили выборки")
-    ax.get_lines()[1].set(color="crimson", lw=1.2, label="Теория")
-    ax.legend()
+    r = (a.returns * 100).to_numpy()
+    (osm, osr), (slope, intercept, _) = _sps.probplot(r, dist="norm")
+    fig, ax = plt.subplots(figsize=(12, 5.5))
+    ax.scatter(osm, osr, s=6, color=_COLORS[0], alpha=0.6)
+    xs = np.array([float(osm.min()), float(osm.max())])
+    ax.plot(xs, slope * xs + intercept, "k--", lw=1.2)
+    ax.set_title(f"QQ-график: {a.name}")
+    ax.set_xlabel("Теоретические квантили N(0,1)")
+    ax.set_ylabel("Квантили доходностей, %")
+    ax.grid(alpha=0.35, linestyle="--")
+    _maybe_save(fig, save, "qq_" + a.name)
     return ax
 
 
-def plot_drawdown(x):
-    """Просадки от исторических пиков."""
+def plot_drawdown(x, save=None):
+    """Просадки от исторического пика, %: линия с заливкой.
+
+    В заголовке - максимальная просадка и дата дна.
+    """
+    import matplotlib.pyplot as plt
+
     a = to_asset(x)
-    dd = drawdown(a)
-    ax = _axes()
-    ax.fill_between(dd.index, dd * 100, 0, color="crimson", alpha=0.5)
-    ax.set_title(f"Просадки от пика: {a.name}")
-    ax.set_ylabel("%")
-    ax.grid(alpha=0.3)
+    dd = drawdown(a) * 100
+    fig, ax = plt.subplots(figsize=(12, 5))
+    ax.plot(dd.index, dd.values, color="#7f7f7f", lw=1.0)
+    ax.fill_between(dd.index, dd.values, 0, color=_FILL, alpha=0.85)
+    mdd = float(dd.min())
+    bottom = dd.idxmin()
+    ax.set_ylabel("Просадка от пика, %")
+    ax.set_title(f"Просадки: {a.name} "
+                 f"(максимальная {mdd:.1f}%, дно {bottom.date()})")
+    _grid(ax)
+    _maybe_save(fig, save, "drawdown_" + a.name)
     return ax
 
 
-def plot_rolling_vol(x, window: int = 63):
-    """Скользящая годовая волатильность (окно 63 дня = квартал)."""
+def plot_rolling_vol(x, window: int = 63, save=None):
+    """Скользящая годовая волатильность, % (окно 63 дня = квартал)."""
+    import matplotlib.pyplot as plt
+
     a = to_asset(x)
     v = rolling_vol(a, window=window)
-    ax = _axes()
-    ax.plot(v.index, v, color="tab:orange", lw=1.2)
-    ax.set_title(f"Скользящая волатильность ({window} дн.): {a.name}")
-    ax.set_ylabel("%, годовых")
-    ax.grid(alpha=0.3)
+    fig, ax = plt.subplots(figsize=(12, 5))
+    ax.plot(v.index, v.values, color=_COLORS[0], lw=1.0)
+    ax.set_title(f"Скользящая волатильность (окно {window} дн.): {a.name}")
+    ax.set_ylabel("Годовая волатильность, %")
+    _grid(ax)
+    _maybe_save(fig, save, "rolling_vol_" + a.name)
     return ax
 
 
-def plot_annual(x):
-    """Годовые доходности столбиками (положительные и отрицательные)."""
-    a = to_asset(x)
-    ann = annual_returns(a)
-    ax = _axes((10, 4.5))
-    colors = ["tab:blue" if v >= 0 else "crimson" for v in ann.to_numpy()]
-    ax.bar(ann.index.astype(str), ann.to_numpy(), color=colors)
-    ax.axhline(0, color="k", lw=0.8)
-    ax.set_title(f"Годовые доходности: {a.name}")
-    ax.set_ylabel("%")
-    ax.grid(alpha=0.3, axis="y")
-    return ax
+def _year_incomplete(a, year) -> bool:
+    """Год не закончился для этого актива."""
+    end = a.dates[-1]
+    return end.year == year and not (end.month == 12 and end.day == 31)
 
 
-def plot_monte_carlo(x, n_sims: int = 20_000, days: int = 252, seed: int = 42,
-                     block: int = 21, bins: int = 60):
-    """Гистограмма смоделированных годовых доходностей (iid-бутстреп).
+def plot_annual(x, save=None):
+    """Годовые доходности: столбики по годам и их распределение.
 
-    Помечены перцентили P5, P50 и P95: например, «P5 = -12%» читается
-    как «в 5% симуляций год оказался хуже -12%».
+    Две панели: слева годовые доходности всех активов столбиками по
+    годам (``*`` - неполный год), справа - распределение годовых
+    доходностей полных лет. Возвращает фигуру matplotlib.
     """
-    a = to_asset(x)
-    sims = _monte_carlo(a, days=days, n_sims=n_sims, seed=seed,
-                        block=block)["iid-бутстреп"] * 100
-    ax = _axes()
-    ax.hist(sims, bins=bins, color="tab:blue", alpha=0.6, density=True,
-            label="Симуляции года")
-    for q, color in ((5, "crimson"), (50, "tab:orange"), (95, "tab:green")):
-        v = float(np.percentile(sims, q))
-        ax.axvline(v, color=color, lw=1.4, ls="--",
-                   label=f"P{q} = {v:.1f}%")
-    ax.axvline(0, color="k", lw=0.8)
-    ax.set_title(f"Монте-Карло: годовая доходность, {a.name}")
-    ax.set_xlabel("Годовая доходность, %")
-    ax.set_ylabel("Плотность")
-    ax.grid(alpha=0.3)
-    ax.legend()
-    return ax
+    import matplotlib.pyplot as plt
+
+    assets = [to_asset(t) for t in ensure_list(x)]
+    ann = {a.name: annual_returns(a) for a in assets}
+    years = sorted(set().union(*(set(v.index) for v in ann.values())))
+    if not years:
+        raise ValueError("Нет данных для годовых доходностей.")
+    last = years[-1]
+
+    fig, (ax1, ax2) = plt.subplots(
+        1, 2, figsize=(14, 5.5), gridspec_kw={"width_ratios": [1.6, 1]}
+    )
+    pos = np.arange(len(years))
+    width = 0.8 / len(assets)
+    for i, a in enumerate(assets):
+        vals = [ann[a.name].get(y, np.nan) for y in years]
+        offset = (i - (len(assets) - 1) / 2) * width
+        ax1.bar(pos + offset, vals, width=width * 0.92,
+                color=_COLORS[i % len(_COLORS)], label=a.name)
+    marked = [y for y in years
+              if any(_year_incomplete(a, y) for a in assets)]
+    ax1.set_xticks(pos)
+    ax1.set_xticklabels(
+        [str(y) + ("*" if y in marked else "") for y in years],
+        rotation=45,
+    )
+    ax1.axhline(0, color="black", lw=0.8)
+    ax1.set_ylabel("Годовая доходность, %")
+    ax1.set_title("Годовые доходности (* - неполный год)")
+    ax1.grid(alpha=0.35, axis="y")
+    ax1.legend(fontsize=9)
+
+    for i, a in enumerate(assets):
+        s = ann[a.name]
+        if _year_incomplete(a, last):
+            s = s[s.index != last]
+        if len(s):
+            ax2.hist(s, bins=min(12, max(3, len(s))),
+                     color=_COLORS[i % len(_COLORS)], alpha=0.6,
+                     label=f"{a.name} ({len(s)} полных лет)")
+    ax2.set_xlabel("Годовая доходность, %")
+    ax2.set_ylabel("Число лет")
+    ax2.set_title("Распределение годовых доходностей")
+    ax2.grid(alpha=0.35, axis="y")
+    ax2.legend(fontsize=9)
+    fig.tight_layout()
+    _maybe_save(fig, save, "annual_" + _stem(*(a.name for a in assets)))
+    return fig
 
 
-def plot_table(data, title: str = "", fontsize: int = 10):
+def plot_monte_carlo(x, n_sims: int = 20_000, days=None, seed: int = 42,
+                     block: int = 21, bins: int = 60, save=None):
+    """Смоделированные распределения годовой доходности, три метода.
+
+    iid-бутстреп и блочный бутстреп - гистограммы (блочный даёт более
+    тяжёлые хвосты, потому что сохраняет кластеризацию волатильности),
+    параметрический метод - красная кривая нормальной плотности. По
+    панели на актив. Возвращает фигуру matplotlib.
+    """
+    import matplotlib.pyplot as plt
+
+    assets = [to_asset(t) for t in ensure_list(x)]
+    n = len(assets)
+    if n == 1:
+        fig, ax = plt.subplots(figsize=(12, 5.5))
+        axes = [ax]
+    else:
+        fig, axes_all = plt.subplots(1, n, figsize=(14, 5.5))
+        axes = list(axes_all)
+    for ax, a in zip(axes, assets):
+        sims = _monte_carlo(a, days=days, n_sims=n_sims, seed=seed,
+                            block=block)
+        iid = sims["iid-бутстреп"] * 100
+        blk = sims[f"блочный бутстреп ({block} дн.)"] * 100
+        par = sims["параметрический N(mu, sigma)"] * 100
+        ax.hist(iid, bins=bins, density=True, color="#1f77b4",
+                alpha=0.5, label="iid-бутстреп")
+        ax.hist(blk, bins=bins, density=True, color=_TREND,
+                alpha=0.55, label=f"блочный бутстреп ({block} дн.)")
+        xs = np.linspace(min(iid.min(), blk.min(), par.min()),
+                         max(iid.max(), blk.max(), par.max()), 400)
+        ax.plot(xs, _sps.norm.pdf(xs, float(par.mean()), float(par.std(ddof=1))),
+                color="#d62728", lw=1.8, label="параметрическая N(μ, σ)")
+        ax.set_title(a.name)
+        ax.set_xlabel("Годовая доходность, %")
+        ax.set_ylabel("Плотность")
+        _grid(ax)
+        ax.legend(fontsize=9)
+    fig.suptitle("Смоделированные распределения годовой доходности",
+                 fontsize=13)
+    fig.tight_layout(rect=[0, 0, 1, 0.94])
+    _maybe_save(fig, save,
+                "monte_carlo_" + _stem(*(a.name for a in assets)))
+    return fig
+
+
+def plot_table(data, title: str = "", fontsize: int = 10, save=None):
     """Рисует DataFrame или Series как таблицу - картинку matplotlib.
 
     Пригодится для отчётов и скриншотов: вместо текстового вывода
@@ -161,6 +337,7 @@ def plot_table(data, title: str = "", fontsize: int = 10):
 
         qr.plot_table(qr.stats_table("SBER"))
         qr.plot_table(qr.monte_carlo_table("SBER"))
+        qr.plot_table(qr.stats_table("SBER"), save="отчёт/метрики.png")
     """
     import matplotlib.pyplot as plt
 
@@ -192,20 +369,28 @@ def plot_table(data, title: str = "", fontsize: int = 10):
         tbl.auto_set_column_width(col=list(range(n_cols)))
     except Exception:  # старые matplotlib - ширины остаются равными
         pass
+    _maybe_save(fig, save, _safe(title or "table"))
     return ax
 
 
-def plot_all(x):
-    """Все основные графики по каждому активу."""
+def plot_all(x, save=None):
+    """Все основные графики по каждому активу (кроме Монте-Карло).
+
+    Рисует рост с базой 100, дневные доходности, а по каждому активу:
+    гистограмму, QQ-график, просадки, скользящую волатильность и
+    годовые доходности. ``save`` передаётся во все графики (см.
+    docstring модуля :mod:`qresearch.plots`).
+    """
     import matplotlib.pyplot as plt
 
     assets = [to_asset(t) for t in ensure_list(x)]
+    plot_growth(assets, save=save)
+    plot_returns(assets, save=save)
     for a in assets:
-        plot_growth(a)
-        plot_histogram(a)
-        plot_qq(a)
-        plot_drawdown(a)
-        plot_rolling_vol(a)
-        plot_annual(a)
+        plot_histogram(a, save=save)
+        plot_qq(a, save=save)
+        plot_drawdown(a, save=save)
+        plot_rolling_vol(a, save=save)
+        plot_annual(a, save=save)
     plt.tight_layout()
     return plt.show()

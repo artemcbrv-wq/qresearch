@@ -1,13 +1,18 @@
-"""Диагностика ряда доходностей: нормальность, кластеризация волатильности, стационарность."""
+"""Диагностика ряда доходностей: нормальность, автокорреляция, кластеризация волатильности, стационарность.
+
+Тесты Льюнг-Бокса и Дики-Фуллера считаются через statsmodels и
+возвращают p-value: вероятность увидеть такую статистику, если
+нулевая гипотеза верна. Вывод при 5% уровне значимости.
+"""
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
 from scipy import stats as _sps
+from statsmodels.stats.diagnostic import acorr_ljungbox
+from statsmodels.tsa.stattools import adfuller
 
 from ._core import to_asset
-
-_ADF_CRIT_5 = -2.86  # критическое значение MacKinnon для модели с константой (5%)
 
 
 def normality_tests(x) -> pd.Series:
@@ -33,58 +38,91 @@ def normality_tests(x) -> pd.Series:
     )
 
 
-def volatility_clustering_test(x, lags=(1, 5, 10, 20)) -> pd.Series:
-    """Кластеризация волатильности: Ljung-Box по квадратам доходностей.
+def _lb(vals: np.ndarray, lags) -> dict:
+    """Q-статистики и p-value Льюнг-Бокса: {лаг: (Q, p)}."""
+    lags = sorted(lags)
+    if len(vals) <= max(lags):
+        raise ValueError(
+            f"История слишком короткая для теста Льюнг-Бокса: нужно "
+            f"больше {max(lags)} наблюдений, есть {len(vals)}."
+        )
+    df = acorr_ljungbox(vals, lags=lags, return_df=True)
+    return {
+        lag: (float(df.loc[lag, "lb_stat"]), float(df.loc[lag, "lb_pvalue"]))
+        for lag in lags
+    }
 
-    Если «плохие дни ходят группами», то квадраты доходностей
-    автокоррелируют, и тест её обнаруживает.
+
+def autocorrelation_test(x, lags=(5, 20)) -> pd.Series:
+    """Автокорреляция самих доходностей: Льюнг-Бокс по заданным лагам.
+
+    Заметная автокорреляция означает, что «вчерашний день помогает
+    предсказать сегодняшний»: наблюдения зависимы, и модели,
+    предполагающие независимость (например, iid-бутстреп), занижают риск.
+    Это отдельное свойство, не путать с кластеризацией волатильности
+    (автокорреляцией квадратов).
+    """
+    a = to_asset(x)
+    res = _lb(a.returns.to_numpy(), lags)
+    s: dict = {}
+    for lag, (q, p) in res.items():
+        s[f"Q (лаг {lag})"] = round(q, 2)
+        s[f"p-value (лаг {lag})"] = round(p, 4)
+    p_min = min(p for _, p in res.values())
+    s["Вывод"] = (
+        "автокорреляция доходностей есть" if p_min < 0.05
+        else "автокорреляция не обнаружена"
+    )
+    return pd.Series(s, name=a.name)
+
+
+def volatility_clustering_test(x, lags=(5, 20)) -> pd.Series:
+    """Кластеризация волатильности: Льюнг-Бокс по квадратам доходностей.
+
+    Если «плохие дни ходят группами», квадраты доходностей
+    автокоррелируют, и тест это обнаруживает.
     """
     a = to_asset(x)
     r = a.returns.to_numpy()
-    y = (r - r.mean()) ** 2
-    n = len(y)
-
-    def rho(k: int) -> float:
-        return float(np.corrcoef(y[:-k], y[k:])[0, 1])
-
-    q_stat = n * (n + 2) * sum(rho(k) ** 2 / (n - k) for k in lags)
-    p_value = float(_sps.chi2.sf(q_stat, len(lags)))
-    return pd.Series(
-        {
-            "Q (Ljung-Box)": round(float(q_stat), 2),
-            "p-value": round(p_value, 4),
-            "Вывод": (
-                "кластеризация волатильности есть" if p_value < 0.05
-                else "кластеризации не обнаружено"
-            ),
-        },
-        name=a.name,
+    res = _lb((r - r.mean()) ** 2, lags)
+    s: dict = {}
+    for lag, (q, p) in res.items():
+        s[f"Q (лаг {lag})"] = round(q, 2)
+        s[f"p-value (лаг {lag})"] = round(p, 4)
+    p_min = min(p for _, p in res.values())
+    s["Вывод"] = (
+        "кластеризация волатильности есть" if p_min < 0.05
+        else "кластеризация не обнаружена"
     )
+    return pd.Series(s, name=a.name)
 
 
 def stationarity_test(x) -> pd.Series:
-    """Стационарность доходностей: упрощённый тест Дики-Фуллера.
+    """Стационарность доходностей: тест Дики-Фуллера (ADF, statsmodels).
 
-    Регрессия r_t на r_{t-1} с константой; H0 - единичный корень
-    (случайное блуждание). t-статистика наклона сравнивается с
-    критическим значением MacKinnon для 5%.
+    H0 - единичный корень (случайное блуждание). Лаг подбирается
+    автоматически (критерий AIC). p-value < 0.05 означает, что ряд
+    стационарен: случайное блуждание отвергается.
     """
     a = to_asset(x)
     r = a.returns.to_numpy()
-    slope, intercept = np.polyfit(r[:-1], r[1:], 1)
-    resid = r[1:] - (intercept + slope * r[:-1])
-    sxx = float(np.sum((r[:-1] - r[:-1].mean()) ** 2))
-    if sxx == 0:
-        raise ValueError("Доходности постоянны, тест неприменим.")
-    se = float(np.sqrt(resid @ resid / (len(r) - 2) / sxx))
-    t_stat = float((slope - 1) / se)
+    if len(r) < 20:
+        raise ValueError(
+            "История слишком короткая для теста ADF: нужно не меньше 20 наблюдений."
+        )
+    if np.all(r == r[0]):
+        raise ValueError("Доходности постоянны, тест ADF неприменим.")
+    res = adfuller(r, autolag="AIC")
+    t_stat, p_value = float(res[0]), float(res[1])
+    crit5 = float(res[4]["5%"])
     return pd.Series(
         {
             "t-статистика (ADF)": round(t_stat, 2),
-            "Критическое значение (5%)": _ADF_CRIT_5,
+            "p-value (ADF)": round(p_value, 4),
+            "Критическое значение (5%)": round(crit5, 2),
             "Вывод": (
                 "стационарен (выброс гипотезы случайного блуждания)"
-                if t_stat < _ADF_CRIT_5
+                if p_value < 0.05
                 else "не отвергаем случайное блуждание"
             ),
         },

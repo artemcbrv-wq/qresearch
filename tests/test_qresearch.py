@@ -250,3 +250,90 @@ def test_single_metrics_return_numbers():
     assert abs(qr.sharpe(a) - (qr.cagr(a) / qr.volatility(a))) < 0.5
     assert qr.max_drawdown(a) <= 0
     assert -1 < qr.var(a, level=95) < 0
+
+
+# --------------------------------------------------------------------- #
+# Новые расчёты: бэктест VaR, автокорреляция, полная статистика
+# --------------------------------------------------------------------- #
+def test_var_backtest():
+    a = make_asset(seed=13)
+    bt = qr.var_backtest(a, level=95, method="parametric")
+    assert bt["Ожидалось"] == int(round(len(a.returns) * 0.05))
+    assert 0 <= bt["Превышений (факт)"] <= len(a.returns)
+    assert bt["VaR, %"] < 0
+
+
+def test_autocorrelation_test_pvalue():
+    s = qr.autocorrelation_test(make_asset(seed=2))
+    assert 0 <= s["p-value (лаг 5)"] <= 1
+    assert 0 <= s["p-value (лаг 20)"] <= 1
+    assert "Вывод" in s.index
+
+
+def test_stationarity_has_pvalue():
+    s = qr.stationarity_test(make_asset(seed=8, n=2000))
+    assert 0 <= s["p-value (ADF)"] <= 1
+    assert s["t-статистика (ADF)"] < 0
+
+
+def test_full_stats_and_table():
+    a = make_asset(seed=4)
+    s = qr.full_stats(a)
+    assert "Превышений VaR95 (факт/ожидалось)" in s.index
+    assert "Льюнг-Бокс p (квадраты, лаги 5/20)" in s.index
+    assert "Дно MDD" in s.index
+    tab = qr.full_stats_table([a])
+    assert tab.shape[1] == 1
+    assert tab.shape[0] == len(s)
+
+
+def test_annual_stats_quartiles():
+    s = qr.annual_stats(make_asset(seed=3, n=1500))
+    for key in ("Минимум, %", "25%, %", "50%, %", "75%, %", "Максимум, %",
+                "Доля положительных лет", "Число убыточных лет"):
+        assert key in s.index
+    assert s["Минимум, %"] <= s["Максимум, %"]
+
+
+def test_annual_table_marks_incomplete_year():
+    a = make_asset(seed=6, n=300, start="2025-01-01")
+    df = qr.annual_table(a)
+    assert str(df.index[-1]).endswith("*")
+    df2 = qr.annual_table(a, mark_incomplete=False)
+    assert not str(df2.index[-1]).endswith("*")
+
+
+def test_compare_annual_and_sharpe_vs():
+    a = make_asset(seed=1, name="A")
+    b = make_asset(seed=2, name="B")
+    df, corr = qr.compare_annual(a, b)
+    assert df.shape[1] == 2
+    assert -1.0 <= corr <= 1.0
+    assert np.isfinite(qr.sharpe_vs(a, b))
+
+
+def test_implied_rate():
+    a = make_asset(seed=9, drift=0.0004, vol=0.001)
+    rate = qr.implied_rate(a)
+    assert len(rate) == len(a.returns)
+    assert float(rate.mean()) > 0
+
+
+def test_monte_carlo_actual_days_per_year():
+    a = make_asset(seed=5, n=756)  # около трёх лет: opy около 252
+    sims = qr.monte_carlo(a, n_sims=100, seed=1)
+    assert sims["iid-бутстреп"].shape == (100,)
+    assert sims["параметрический N(mu, sigma)"].shape == (100,)
+
+
+def test_plots_restyled_and_save(tmp_path):
+    a = make_asset(seed=11, n=300)
+    fig = qr.plot_annual(a, save=str(tmp_path / "annual.png"))
+    assert (tmp_path / "annual.png").exists()
+    fig_mc = qr.plot_monte_carlo(a, n_sims=200, seed=3,
+                                 save=str(tmp_path / "mc.png"))
+    assert (tmp_path / "mc.png").exists()
+    assert len(fig.axes) == 2      # две панели: бары + распределение
+    assert len(fig_mc.axes) == 1   # один актив - одна панель
+    qr.plot_table(qr.daily_stats(a), save=str(tmp_path / "table.png"))
+    assert (tmp_path / "table.png").exists()
