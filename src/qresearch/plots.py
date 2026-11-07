@@ -160,18 +160,19 @@ def plot_histogram(x, bins: int = 120, save=None):
 
 
 def plot_qq(x, save=None):
-    """QQ-график против нормали: метод и дизайн оригинала (Задание 7).
+    """QQ-график: выборочные квантили против квантилей нормали, в %.
 
-    Расчёт - как в scipy probplot: по оси X теоретические квантили
-    N(0,1), по оси Y - отсортированные дневные доходности, %; поверх -
-    пунктирная прямая метода наименьших квадратов (slope, intercept из
-    probplot), проведённая по всей ширине теоретических квантилей.
-    Отклонение точек от прямой = «тяжёлые хвосты»: S-образные концы
-    (точки выше прямой справа и ниже слева) означают, что экстремальные
-    дни случаются чаще, чем предсказывает нормальное распределение.
+    Расчёт: probplot по дневным доходностям в процентах; по оси X -
+    квантили нормали, подогнанной к ряду (slope * osm + intercept из
+    probplot), то есть в тех же процентах, что и выборочные квантили
+    по оси Y. Пределы осей одинаковые, поэтому «идеальная нормальность»
+    - точная диагональ y = x из угла в угол, а отклонение точек от неё
+    читается прямо в процентах: S-образные концы (точки выше прямой
+    справа и ниже слева) - «тяжёлые хвосты», экстремальные дни случаются
+    чаще, чем предсказывает нормальное распределение.
 
-    Панель ~6.5 x 5.5 (почти квадрат); для списка активов - по панели
-    на актив с общим заголовком, как на Рис. 7.4 оригинала.
+    Панель ~6.5 x 5.5; для списка активов - по панели на актив.
+    Подписи осей - как в оригинальной работе.
     """
     import matplotlib.pyplot as plt
 
@@ -186,20 +187,23 @@ def plot_qq(x, save=None):
     for i, (ax, a) in enumerate(zip(axes, assets)):
         vals = (a.returns * 100).to_numpy()
         (osm, osr), (slope, intercept, _) = _sps.probplot(vals, dist="norm")
-        ax.scatter(osm, osr, s=6, color=_COLORS[i % len(_COLORS)], alpha=0.6)
-        xs = np.array([float(osm.min()), float(osm.max())])
-        ax.plot(xs, slope * xs + intercept, "k--", lw=1.2)
+        theor = slope * osm + intercept  # квантили подогнанной нормали, %
+        ax.scatter(theor, osr, s=6, color=_COLORS[i % len(_COLORS)], alpha=0.6)
+        lo = min(float(theor.min()), float(osr.min()))
+        hi = max(float(theor.max()), float(osr.max()))
+        pad = (hi - lo) * 0.05
+        lims = [lo - pad, hi + pad]
+        ax.plot(lims, lims, "k--", lw=1.2)  # диагональ y = x из угла в угол
+        ax.set_xlim(lims)
+        ax.set_ylim(lims)
         ax.set_title(f"{a.name} — QQ-график")
         ax.set_xlabel("Теоретические квантили N(0,1)")
         ax.set_ylabel("Квантили доходностей, %")
         ax.grid(alpha=0.35, linestyle="--")
-    if n > 1:
-        fig.suptitle("QQ-графики дневных доходностей "
-                     "(отклонение от прямой = «тяжёлые хвосты»)",
-                     fontsize=13)
-        fig.tight_layout(rect=[0, 0, 1, 0.93])
     _maybe_save(fig, save, "qq_" + _stem(*(a.name for a in assets)))
     return axes[0] if n == 1 else fig
+
+
 def plot_drawdown(x, save=None):
     """Просадки от исторического пика, %: линия с заливкой.
 

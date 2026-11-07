@@ -340,19 +340,23 @@ def test_plots_restyled_and_save(tmp_path):
 
 
 
-def test_plot_qq_matches_original_method(tmp_path):
+def test_plot_qq_matches_target(tmp_path):
     a = make_asset(seed=12, n=400)
     ax = qr.plot_qq(a, save=str(tmp_path / "qq.png"))
     assert (tmp_path / "qq.png").exists()
-    # метод оригинала: N(0,1) по X, доходности в % по Y, панель ~6.5x5.5
+    # метод эталона: подписи дословно, панель 6.5x5.5
     assert ax.get_xlabel() == "Теоретические квантили N(0,1)"
     assert ax.get_ylabel() == "Квантили доходностей, %"
     w, h = ax.figure.get_size_inches()
     assert abs(w - 6.5) < 0.01 and abs(h - 5.5) < 0.01
-    assert len(ax.lines) == 1  # пунктирная МНК-прямая из probplot
+    # обе оси в % с одинаковыми пределами: диагональ y = x под 45 градусов
+    x0, x1 = ax.get_xlim()
+    y0, y1 = ax.get_ylim()
+    assert abs((x1 - x0) - (y1 - y0)) < 1e-9
+    assert len(ax.lines) == 1  # пунктирная диагональ
     fig = qr.plot_qq([make_asset(seed=1, name="A"), make_asset(seed=2, name="B")],
                      save=str(tmp_path / "qq2.png"))
     assert (tmp_path / "qq2.png").exists()
-    assert len(fig.axes) == 2  # по панели на актив, как Рис. 7.4
+    assert len(fig.axes) == 2  # по панели на актив
     import matplotlib.pyplot as plt
     plt.close("all")
