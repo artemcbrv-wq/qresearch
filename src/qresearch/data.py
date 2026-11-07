@@ -1,8 +1,10 @@
 """Загрузка данных: МосБиржа (ISS API) и локальные CSV/Excel файлы.
 
-Тикеры акций и индексов МосБиржи загружаются с публичного API iss.moex.com.
-Свои данные читаются из файлов через :func:`load_file`. Загруженные активы
-кэшируются в памяти, поэтому повторные вызовы не ходят в сеть.
+Тикеры акций и индексов МосБиржи загружаются с публичного API iss.moex.com
+(открытый доступ, без регистрации и ключей, рыночные данные с задержкой
+около 15 минут). Свои данные читаются из файлов через :func:`load_file`.
+Загруженные активы кэшируются в памяти, поэтому повторные вызовы не ходят
+в сеть.
 """
 from __future__ import annotations
 
@@ -26,13 +28,15 @@ _HTTP_HEADERS = {
         "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
     ),
     "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8",
 }
 
 # Известные индексы МосБиржи: тикер -> (доска торгов, дата начала истории).
+# Индексы живут на рынке index: основная доска SNDX, индексы РТС - RTSI.
 _INDEX_BOARDS = {
-    "IMOEX": ("RTSI", "2010-09-22"),
+    "IMOEX": ("SNDX", "2010-09-22"),
     "RTSI": ("RTSI", "2010-09-22"),
-    "MOEXBC": ("RTSI", "2010-12-30"),
+    "MOEXBC": ("SNDX", "2010-12-30"),
 }
 
 # Человекочитаемые псевдонимы индексов (можно передавать в любую функцию).
@@ -42,11 +46,16 @@ INDEX_PRESETS = {
     "MOEX Blue Chips": "MOEXBC",
 }
 
-# Запасные доски торгов на случай, если определить основную не удалось.
+# Запасные доски торгов, если определить основную не удалось:
+# TQBR - акции (основной режим Т+), TQTF - фонды и ETF,
+# SNDX - индексы, RTSI - индексы РТС, TQOB - ОФЗ, TQCB - облигации.
 _FALLBACK_BOARDS = (
-    ("stock", "shares", "TQBR"),   # акции
-    ("stock", "index", "RTSI"),    # индексы
-    ("stock", "bonds", "TQOB"),    # облигации
+    ("stock", "shares", "TQBR"),
+    ("stock", "shares", "TQTF"),
+    ("stock", "index", "SNDX"),
+    ("stock", "index", "RTSI"),
+    ("stock", "bonds", "TQOB"),
+    ("stock", "bonds", "TQCB"),
 )
 
 _ENCODINGS = ("utf-8-sig", "utf-8", "cp1251")
@@ -78,76 +87,177 @@ def _get_json(url: str) -> dict:
         ) from e
 
 
-def _iss_block(js: dict, name: str) -> pd.DataFrame:
-    """Разворачивает блок ISS-ответа (columns + data) в DataFrame."""
-    block = js.get(name)
-    if not isinstance(block, dict) or "columns" not in block:
-        snippet = json.dumps(js, ensure_ascii=False)[:300]
+def _iss_block(js, name: str, required: bool = True) -> pd.DataFrame:
+    """Разворачивает блок ISS-ответа (columns + data) в DataFrame.
+
+    ISS менял формат ответа: раньше колонки приходили списком словарей
+    ``[{"name": ...}]``, теперь метаданные вынесены в отдельную секцию
+    ``metadata``, а ``columns`` - простой список строк. Поддерживаем оба
+    варианта, а также строки-записи и словари-записи в ``data``.
+    """
+    block = js.get(name) if isinstance(js, dict) else None
+    if not isinstance(block, dict):
+        if not required:
+            return pd.DataFrame()
+        snippet = json.dumps(js, ensure_ascii=False, default=str)[:300]
         raise ValueError(
             f"Неожиданный ответ МосБиржи: нет блока «{name}». "
             f"Начало ответа: {snippet!r}"
         )
-    cols = [c["name"] for c in block["columns"]]
-    return pd.DataFrame(block["data"], columns=cols)
+    raw = block.get("columns")
+    if isinstance(raw, list):
+        cols = [c["name"] if isinstance(c, dict) else str(c) for c in raw]
+    elif isinstance(raw, str):
+        cols = [c.strip() for c in raw.split(",") if c.strip()]
+    else:
+        cols = []
+    if not cols:
+        raise ValueError(f"В блоке «{name}» нет списка колонок: {str(block)[:200]}")
+    data = block.get("data")
+    if not isinstance(data, list) or not data:
+        return pd.DataFrame(columns=cols)
+    rows = [r for r in data if isinstance(r, (list, dict))]
+    if not rows:
+        return pd.DataFrame(columns=cols)
+    if isinstance(rows[0], dict):
+        df = pd.DataFrame(rows)
+        keep = [c for c in cols if c in df.columns] or list(df.columns)
+        return df[keep]
+    width = min(len(cols), min(len(r) for r in rows))
+    return pd.DataFrame([r[:width] for r in rows], columns=cols[:width])
+
+
+def _pick(df: pd.DataFrame, *names):
+    """Возвращает первую найденную колонку df (без учёта регистра) или None."""
+    lower = {str(c).lower(): c for c in df.columns}
+    for n in names:
+        col = lower.get(n.lower())
+        if col is not None:
+            return df[col]
+    return None
 
 
 class _EmptyHistory(Exception):
-    """По этой доске торгов истории нет (пробуем следующую доску)."""
+    """По этой доске торгов истории нет (пробуем следующую)."""
 
 
-def _fetch_history(ticker: str, engine: str, market: str, board: str,
-                   start, end) -> pd.DataFrame:
-    """Постранично скачивает историю с одной доски торгов."""
-    base = (
-        f"{_MOEX_BASE}/history/engines/{engine}/markets/{market}"
-        f"/boards/{board}/securities/{urllib.parse.quote(ticker)}.json"
-    )
-    frames: list[pd.DataFrame] = []
+def _fetch_pages(url: str, base_params: dict, block: str,
+                 cursor_block: str) -> pd.DataFrame:
+    """Постранично скачивает все строки одного блока ISS-ответа.
+
+    Пагинация - параметром ``start``, полный объём подсказывает служебный
+    блок ``*.cursor`` (колонки INDEX, TOTAL, PAGESIZE).
+    """
+    frames: list = []
     cursor = 0
-    while True:
-        params = urllib.parse.urlencode(
-            {"from": start, "till": end or "", "start": cursor}
-        )
-        js = _get_json(f"{base}?{params}")
-        page = _iss_block(js, "history")
+    for _ in range(100):  # не больше 100 страниц = 10 000 строк
+        params = dict(base_params)
+        params["start"] = cursor
+        js = _get_json(f"{url}?{urllib.parse.urlencode(params)}")
+        page = _iss_block(js, block)
         if page.empty:
             break
         frames.append(page)
         cursor += len(page)
-        cur = js.get("history.cursor")
-        data = cur.get("data", []) if isinstance(cur, dict) else []
-        total = int(data[0][1]) if data and len(data[0]) > 1 else 0
-        if total and cursor >= total:
-            break
+        cur = _iss_block(js, cursor_block, required=False)
+        if not cur.empty and cur.shape[1] > 1:
+            try:
+                total = int(cur.iloc[0, 1])
+            except (TypeError, ValueError):
+                total = 0
+            if total and cursor >= total:
+                break
         if len(page) < 100:  # страница меньше максимальной - данные кончились
             break
     if not frames:
-        raise _EmptyHistory(f"{board}: история пуста")
+        raise _EmptyHistory(f"«{block}»: история пуста")
     return pd.concat(frames, ignore_index=True)
+
+
+def _df_dates_prices(rows: pd.DataFrame) -> pd.DataFrame:
+    """Оставляет из ISS-ответа только дату торгов и цену закрытия."""
+    dates = _pick(rows, "TRADEDATE", "end", "begin")
+    prices = _pick(rows, "CLOSE", "lastprice")
+    if dates is None or prices is None:
+        raise _EmptyHistory("в ответе нет колонок с датой и ценой закрытия")
+    df = pd.DataFrame(
+        {
+            DATE_COL: dates.astype(str).str.slice(0, 10),
+            PRICE_COL: pd.to_numeric(prices, errors="coerce"),
+        }
+    )
+    df = df.dropna().drop_duplicates(subset=DATE_COL).reset_index(drop=True)
+    if df.empty:
+        raise _EmptyHistory("нет строк с ценой закрытия")
+    return df
+
+
+def _fetch_history(ticker: str, engine: str, market: str, board: str,
+                   start, end) -> pd.DataFrame:
+    """История торгов с одной доски: /iss/history/engines/.../securities/X.json"""
+    url = (
+        f"{_MOEX_BASE}/history/engines/{engine}/markets/{market}"
+        f"/boards/{board}/securities/{urllib.parse.quote(ticker)}.json"
+    )
+    params = {"from": start, "iss.only": "history,history.cursor"}
+    if end:
+        params["till"] = end
+    rows = _fetch_pages(url, params, "history", "history.cursor")
+    return _df_dates_prices(rows)
+
+
+def _fetch_candles(ticker: str, engine: str, market: str, start, end,
+                   board=None) -> pd.DataFrame:
+    """Дневные свечи (interval=24): /iss/engines/.../securities/X/candles.json"""
+    url = f"{_MOEX_BASE}/engines/{engine}/markets/{market}"
+    if board:
+        url += f"/boards/{board}"
+    url += f"/securities/{urllib.parse.quote(ticker)}/candles.json"
+    params = {"interval": 24, "from": start, "iss.only": "candles,candles.cursor"}
+    if end:
+        params["till"] = end
+    rows = _fetch_pages(url, params, "candles", "candles.cursor")
+    return _df_dates_prices(rows)
 
 
 def _moex_candidates(ticker: str) -> list:
     """Возможные (engine, market, board) для тикера, от лучших к запасным."""
     if ticker in _INDEX_BOARDS:
-        return [("stock", "index", _INDEX_BOARDS[ticker][0])]
+        first = _INDEX_BOARDS[ticker][0]
+        second = "RTSI" if first != "RTSI" else "SNDX"
+        return [("stock", "index", first), ("stock", "index", second)]
+    group, board = "", ""
     try:
         js = _get_json(
             f"{_MOEX_BASE}/securities/{urllib.parse.quote(ticker)}.json"
-            "?iss.only=securities&iss.meta=off"
+            "?iss.only=securities"
         )
         df = _iss_block(js, "securities")
         if not df.empty:
-            row = df.iloc[0]
-            group = str(row.get("GROUP", "")).lower()
-            board = str(row.get("PRIMARYBOARDID") or row.get("BOARDID") or "")
-            if "index" in group:
-                return [("stock", "index", board or "RTSI")]
-            if "bond" in group:
-                return [("stock", "bonds", board or "TQOB")]
-            return [("stock", "shares", board or "TQBR")]
+            g = _pick(df, "group")
+            b = _pick(df, "primaryboardid", "boardid")
+            if g is not None:
+                group = str(g.iloc[0]).lower()
+            if b is not None:
+                board = str(b.iloc[0])
     except Exception:
         pass  # разведка не удалась: переберём типовые доски торгов
-    return list(_FALLBACK_BOARDS)
+    if "index" in group:
+        base, boards = ("stock", "index"), [board or "SNDX", "SNDX", "RTSI"]
+    elif "bond" in group:
+        base, boards = ("stock", "bonds"), [board or "TQOB", "TQOB", "TQCB"]
+    elif "fund" in group or "etf" in group or "ppif" in group:
+        base, boards = ("stock", "shares"), [board or "TQTF", "TQTF", "TQBR"]
+    elif group:
+        base, boards = ("stock", "shares"), [board or "TQBR", "TQBR", "TQTF"]
+    else:
+        return list(_FALLBACK_BOARDS)
+    seen, out = set(), []
+    for b in boards:
+        if b and b not in seen:
+            seen.add(b)
+            out.append((base[0], base[1], b))
+    return out
 
 
 def load_moex(ticker: str, start=None, end=None, board=None, name=None) -> Asset:
@@ -169,25 +279,30 @@ def load_moex(ticker: str, start=None, end=None, board=None, name=None) -> Asset
         start = _INDEX_BOARDS.get(ticker, ("", "2010-01-01"))[1]
 
     candidates = _moex_candidates(ticker)
-    if board is not None:
+    if board is not None and candidates:
         candidates = [(candidates[0][0], candidates[0][1], board)]
 
     errors: list[str] = []
     for engine, market, board_id in candidates:
         try:
-            rows = _fetch_history(ticker, engine, market, board_id, start, end)
-        except _EmptyHistory as e:
-            errors.append(str(e))
-            continue
+            df = _fetch_history(ticker, engine, market, board_id, start, end)
         except Exception as e:
             errors.append(f"{board_id}: {e}")
             continue
-        df = pd.DataFrame({DATE_COL: rows["TRADEDATE"], PRICE_COL: rows["CLOSE"]})
+        return Asset(df, name=name or ticker)
+
+    # Последний шанс: дневные свечи без привязки к доске торгов.
+    for engine, market in (("stock", "shares"), ("stock", "index"), ("stock", "bonds")):
+        try:
+            df = _fetch_candles(ticker, engine, market, start, end)
+        except Exception as e:
+            errors.append(f"свечи/{market}: {e}")
+            continue
         return Asset(df, name=name or ticker)
 
     raise ValueError(
-        f"МосБиржа не вернула данных для «{ticker}». Попытки: "
-        + "; ".join(errors)
+        f"МосБиржа не вернула данных для «{ticker}» (доски: "
+        f"{', '.join(c[2] for c in candidates)}). Попытки: " + "; ".join(errors)
     )
 
 
