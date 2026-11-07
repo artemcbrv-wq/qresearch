@@ -337,3 +337,12 @@ def test_plots_restyled_and_save(tmp_path):
     assert len(fig_mc.axes) == 1   # один актив - одна панель
     qr.plot_table(qr.daily_stats(a), save=str(tmp_path / "table.png"))
     assert (tmp_path / "table.png").exists()
+
+
+def test_plot_qq_square_diagonal(tmp_path):
+    a = make_asset(seed=12, n=400)
+    ax = qr.plot_qq(a, save=str(tmp_path / "qq.png"))
+    assert (tmp_path / "qq.png").exists()
+    x0, x1 = ax.get_xlim()
+    y0, y1 = ax.get_ylim()
+    assert abs((x1 - x0) - (y1 - y0)) < 1e-9  # равные оси: квадрат

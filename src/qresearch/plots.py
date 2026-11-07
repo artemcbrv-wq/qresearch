@@ -160,10 +160,15 @@ def plot_histogram(x, bins: int = 120, save=None):
 
 
 def plot_qq(x, save=None):
-    """QQ-график против нормали: точки-квантили и пунктирная линия.
+    """QQ-график против нормали: квадрат с диагональю y = x.
 
+    По оси Y - выборочные квантили дневных доходностей, %; по оси X -
+    теоретические квантили подобранной нормали N(μ, σ) в тех же
+    процентах. Оба ряда в одинаковых единицах, поэтому «идеальная
+    нормальность» - точная диагональ y = x под 45°, фигура квадратная,
+    а отклонения точек от прямой читаются прямо в процентах:
     S-образные концы (точки выше прямой справа и ниже слева) означают
-    тяжёлые хвосты: экстремальные дни случаются чаще, чем предсказывает
+    тяжёлые хвосты - экстремальные дни случаются чаще, чем предсказывает
     нормальное распределение.
     """
     import matplotlib.pyplot as plt
@@ -171,18 +176,23 @@ def plot_qq(x, save=None):
     a = to_asset(x)
     r = (a.returns * 100).to_numpy()
     (osm, osr), (slope, intercept, _) = _sps.probplot(r, dist="norm")
-    fig, ax = plt.subplots(figsize=(12, 5.5))
-    ax.scatter(osm, osr, s=6, color=_COLORS[0], alpha=0.6)
-    xs = np.array([float(osm.min()), float(osm.max())])
-    ax.plot(xs, slope * xs + intercept, "k--", lw=1.2)
-    ax.set_title(f"QQ-график: {a.name}")
-    ax.set_xlabel("Теоретические квантили N(0,1)")
+    theor = slope * osm + intercept  # квантили N(μ, σ) в процентах
+
+    fig, ax = plt.subplots(figsize=(7.5, 7.5))
+    ax.scatter(theor, osr, s=6, color=_COLORS[0], alpha=0.6)
+    lo = min(float(theor.min()), float(osr.min()))
+    hi = max(float(theor.max()), float(osr.max()))
+    pad = (hi - lo) * 0.05
+    lims = [lo - pad, hi + pad]
+    ax.plot(lims, lims, "k--", lw=1.2)  # диагональ y = x
+    ax.set_xlim(lims)
+    ax.set_ylim(lims)
+    ax.set_title(f"{a.name} — QQ-график")
+    ax.set_xlabel("Теоретические квантили N(μ, σ), %")
     ax.set_ylabel("Квантили доходностей, %")
     ax.grid(alpha=0.35, linestyle="--")
     _maybe_save(fig, save, "qq_" + a.name)
     return ax
-
-
 def plot_drawdown(x, save=None):
     """Просадки от исторического пика, %: линия с заливкой.
 
