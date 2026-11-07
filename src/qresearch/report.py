@@ -1,7 +1,8 @@
-"""Отчёты одной командой: quick (главные цифры) и report (всё сразу)."""
+"""Отчёты одной командой: quick (ключевые метрики) и report (всё сразу)."""
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 
 from ._core import ensure_list, to_asset
 from .diagnostics import diagnostics as _diagnostics
@@ -17,13 +18,11 @@ def _fmt_frame(df) -> str:
     return df.to_string(na_rep="-")
 
 
-def quick(x):
-    """Главные цифры по каждому активу: одна таблица на экран.
+def quick(x) -> pd.DataFrame:
+    """Ключевые метрики по каждому активу: одна таблица на экран.
 
-    Возвращает DataFrame (колонки - активы), а также печатает его.
+    Печатает и возвращает DataFrame (колонки - активы).
     """
-    import pandas as pd
-
     assets = [to_asset(t) for t in ensure_list(x)]
     rows = {}
     for a in assets:
@@ -45,30 +44,30 @@ def quick(x):
             "Макс. просадка, %": round(float(max_drawdown(a)) * 100, 2),
         }
     out = pd.DataFrame(rows)
-    print("qresearch - главные цифры\n" + "-" * 60)
+    print("qresearch: ключевые метрики\n" + "-" * 60)
     print(_fmt_frame(out))
     return out
 
 
 def report(x, days: int = 252, n_sims: int = 20_000, seed: int = 42,
            block: int = 21, show_plots: bool = True) -> dict:
-    """Полный отчёт: таблицы 7-9, диагностика, портфель и графики.
+    """Полный отчёт: статистики, годовые доходности, диагностика, Монте-Карло, портфель и графики.
 
-    Печатает всё в стиле отчёта и возвращает словарь с DataFrame'ами
+    Печатает все блоки отчёта и возвращает словарь с DataFrame
     для дальнейшей работы: ``stats``, ``annual``, ``diagnostics``,
     ``monte_carlo``, ``portfolio`` (если активов больше одного).
     """
     assets = [to_asset(t) for t in ensure_list(x)]
-    out = {}
+    out: dict = {}
 
-    # ---------- Таблица 7: описательные статистики ----------
+    # ---------- Описательные статистики ----------
     out["stats"] = stats_table(assets)
-    print("ТАБЛИЦА 7 - Описательные статистики дневных доходностей\n")
+    print("ОПИСАТЕЛЬНЫЕ СТАТИСТИКИ ДНЕВНЫХ ДОХОДНОСТЕЙ\n")
     print(_fmt_frame(out["stats"]))
 
-    # ---------- Таблица 8: годовые доходности ----------
+    # ---------- Годовые доходности ----------
     out["annual"] = annual_table(assets)
-    print("\nТАБЛИЦА 8 - Годовые доходности, %\n")
+    print("\nГОДОВЫЕ ДОХОДНОСТИ, %\n")
     print(_fmt_frame(out["annual"]))
     for a in assets:
         print(f"\n{a.name}: {_fmt_frame(annual_stats(a))}")
@@ -80,8 +79,8 @@ def report(x, days: int = 252, n_sims: int = 20_000, seed: int = 42,
         for title, series in blocks.items():
             print(f"{title}: {_fmt_frame(series)}")
 
-    # ---------- Таблица 9: Монте-Карло ----------
-    print("\nТАБЛИЦА 9 - Монте-Карло: годовая доходность (все методы)\n")
+    # ---------- Монте-Карло ----------
+    print("\nМОНТЕ-КАРЛО: РАСПРЕДЕЛЕНИЕ ГОДОВОЙ ДОХОДНОСТИ\n")
     mc_by_asset = {}
     for a in assets:
         mc_by_asset[a.name] = _mc_table(
@@ -95,7 +94,7 @@ def report(x, days: int = 252, n_sims: int = 20_000, seed: int = 42,
     if len(assets) > 1:
         pf = _portfolio(assets)
         out["portfolio"] = pf
-        print("\nПОРТФЕЛЬ - риск и доходность с учётом корреляций\n")
+        print("\nПОРТФЕЛЬ: риск и доходность с учётом корреляций\n")
         print("Корреляции дневных доходностей:")
         print(_fmt_frame(pf.correlation()))
         print("\nИтоги портфеля (равные веса, если веса не заданы):")

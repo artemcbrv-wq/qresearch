@@ -1,4 +1,4 @@
-"""Диагностика модели: нормальность, кластеризация волатильности, стационарность."""
+"""Диагностика ряда доходностей: нормальность, кластеризация волатильности, стационарность."""
 from __future__ import annotations
 
 import numpy as np
@@ -7,7 +7,7 @@ from scipy import stats as _sps
 
 from ._core import to_asset
 
-_ADF_CRIT_5 = -2.86  # приближённое критическое значение MacKinnon (5%)
+_ADF_CRIT_5 = -2.86  # критическое значение MacKinnon для модели с константой (5%)
 
 
 def normality_tests(x) -> pd.Series:
@@ -63,15 +63,16 @@ def volatility_clustering_test(x, lags=(1, 5, 10, 20)) -> pd.Series:
 
 
 def stationarity_test(x) -> pd.Series:
-    """Стационарность доходностей: тест Дики-Фуллера (AR(1) без константы).
+    """Стационарность доходностей: упрощённый тест Дики-Фуллера.
 
-    Упрощённая версия ADF: t-статистика наклона в регрессии
-    r_t на r_{t-1}, сравнивается с критическим значением 5%.
+    Регрессия r_t на r_{t-1} с константой; H0 - единичный корень
+    (случайное блуждание). t-статистика наклона сравнивается с
+    критическим значением MacKinnon для 5%.
     """
     a = to_asset(x)
     r = a.returns.to_numpy()
-    slope, _ = np.polyfit(r[:-1], r[1:], 1)
-    resid = r[1:] - (slope * r[:-1])
+    slope, intercept = np.polyfit(r[:-1], r[1:], 1)
+    resid = r[1:] - (intercept + slope * r[:-1])
     sxx = float(np.sum((r[:-1] - r[:-1].mean()) ** 2))
     if sxx == 0:
         raise ValueError("Доходности постоянны, тест неприменим.")

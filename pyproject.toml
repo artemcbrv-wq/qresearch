@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "qresearch"
 version = "0.1.0"
-description = "Количественная аналитика финансовых рынков для всех: статистика доходностей, риск-метрики, Монте-Карло и портфели в несколько строк кода"
+description = "Количественная аналитика финансовых рынков: статистика доходностей, риск-метрики, Монте-Карло и портфели в несколько строк кода"
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"
@@ -16,7 +16,7 @@ authors = [
 keywords = [
     "quant", "quantitative-finance", "finance", "moex", "moscow-exchange",
     "monte-carlo", "bootstrap", "var", "cvar", "drawdown", "portfolio",
-    "ofz", "russian-market", "risk", "analytics", "low-code",
+    "risk", "analytics", "low-code",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -38,7 +38,6 @@ dependencies = [
     "numpy>=1.22",
     "scipy>=1.8",
     "matplotlib>=3.5",
-    "yfinance>=0.2",
 ]
 
 [project.optional-dependencies]

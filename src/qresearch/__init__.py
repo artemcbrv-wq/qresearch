@@ -1,32 +1,30 @@
-"""qresearch - количественная аналитика финансовых рынков для всех.
+"""qresearch - количественная аналитика финансовых рынков.
 
 Библиотека для анализа доходностей, риска и портфелей без глубокого
 знания Python. Достаточно двух команд::
 
     import qresearch as qr
-    qr.report(["RUGBITR5+", "RUSFARIND"])   # полный отчёт
+    qr.report(["SBER", "GAZP"])   # полный отчёт
 
-Быстрый старт
--------------
-Скачивание данных (источник определяется автоматически):
-    a = qr.load("SBER")         # акция МосБиржи
-    b = qr.load("RUGBITR5+")    # индекс ОФЗ (МосБиржа)
-    c = qr.load("AAPL")         # акция с Yahoo Finance
-    d = qr.load_file("цены.csv")   # свой CSV/Excel файл
+Загрузка данных
+---------------
+    a = qr.load("SBER")           # акция МосБиржи
+    b = qr.load("IMOEX")          # индекс МосБиржи
+    c = qr.load_file("цены.csv")  # свой CSV/Excel файл
 
 Анализ одной командой (в любую функцию можно передавать тикеры напрямую):
-    qr.quick("SBER")                     # главные цифры
-    qr.stats_table(["SBER", "GAZP"])     # все статистики (таблица 7)
-    qr.annual_table("RUGBITR5+")         # доходности по годам (таблица 8)
-    qr.diagnostics("RUGBITR5+")          # нормальность, кластеризация, ADF
-    qr.monte_carlo_table("RUGBITR5+")    # Монте-Карло (таблица 9)
+    qr.quick("SBER")                     # ключевые метрики
+    qr.stats_table(["SBER", "GAZP"])     # все описательные статистики
+    qr.annual_table("IMOEX")             # доходности по годам
+    qr.diagnostics("SBER")               # нормальность, кластеризация, стационарность
+    qr.monte_carlo_table("SBER")         # Монте-Карло
     qr.report("SBER")                    # всё сразу + графики
 
 Риск и портфели:
     qr.var("SBER", level=95)             # VaR (доля единицы)
     qr.cvar("SBER", level=99)            # CVaR
-    qr.drawdown_info("SBER")            # просадка с датами
-    p = qr.portfolio(["SBER", "RUGBITR5+"], weights=[0.7, 0.3])
+    qr.drawdown_info("SBER")             # просадка с датами
+    p = qr.portfolio(["SBER", "GAZP"], weights=[0.7, 0.3])
     p.summary(); p.correlation(); p.risk_contribution(); p.min_variance()
 
 Графики:
@@ -38,7 +36,7 @@
 from __future__ import annotations
 
 from ._core import Asset, ensure_list, to_asset
-from .data import INDEX_PRESETS, load, load_file, load_moex, load_yahoo
+from .data import INDEX_PRESETS, load, load_file, load_moex
 from .diagnostics import (
     diagnostics,
     normality_tests,
@@ -76,7 +74,7 @@ __version__ = "0.1.0"
 
 __all__ = [
     # данные
-    "load", "load_file", "load_moex", "load_yahoo", "INDEX_PRESETS",
+    "load", "load_file", "load_moex", "INDEX_PRESETS",
     "Asset", "to_asset", "ensure_list",
     # статистики
     "daily_stats", "stats_table", "annual_returns", "annual_table",

@@ -5,6 +5,7 @@
 """
 import numpy as np
 import pandas as pd
+import pytest
 
 import qresearch as qr
 from qresearch._core import Asset, DATE_COL, PRICE_COL
@@ -42,14 +43,39 @@ def test_asset_from_series():
     assert a.returns.iloc[0] == 0.01
 
 
+def test_asset_rejects_garbage():
+    with pytest.raises(ValueError):
+        Asset({"foo": [1, 2, 3]})
+
+
 def test_ensure_list():
     assert qr.ensure_list("SBER") == ["SBER"]
     assert qr.ensure_list(["A", "B"]) == ["A", "B"]
     assert qr.ensure_list(("A",)) == ["A"]
 
 
+def test_load_file_csv(tmp_path):
+    p = tmp_path / "prices.csv"
+    df = pd.DataFrame({
+        "date": pd.bdate_range("2024-01-01", periods=50),
+        "close": 100.0 + np.arange(50),
+    })
+    df.to_csv(p, index=False)
+    a = qr.load_file(str(p))
+    assert len(a.prices) == 50
+    assert a.dates.is_monotonic_increasing
+    # явные имена колонок дают тот же результат
+    b = qr.load_file(str(p), date_col="date", price_col="close")
+    assert abs(b.prices.iloc[-1] - 149.0) < 1e-9
+
+
+def test_load_unknown_ticker_raises():
+    with pytest.raises(ValueError):
+        qr.load("NO_SUCH_TICKER_XYZ")
+
+
 # --------------------------------------------------------------------- #
-# Статистики (таблицы 7 и 8)
+# Статистики
 # --------------------------------------------------------------------- #
 def test_daily_stats():
     s = qr.daily_stats(make_asset())
@@ -59,6 +85,13 @@ def test_daily_stats():
     # у синтетики с drift=0.04%/день CAGR около 10% годовых
     assert 0 < s["CAGR (геометрическая), %"] < 40
     assert s["Доля отрицательных дней, %"] < 60
+
+
+def test_daily_stats_short_history():
+    # короче окна скользящей волатильности - не должно быть NaN
+    s = qr.daily_stats(make_asset(n=40))
+    assert "Макс. скользящая волатильность (63 дн.), %" in s.index
+    assert s["Макс. скользящая волатильность (63 дн.), %"] > 0
 
 
 def test_stats_table():
@@ -124,8 +157,15 @@ def test_diagnostics_blocks():
     assert d["Стационарность"]["t-статистика (ADF)"] < 0
 
 
+def test_stationarity_on_random_walk():
+    # дневные доходности - стационарный ряд: ADF должен быть глубже критического
+    a = make_asset(seed=8, n=2000)
+    t = qr.stationarity_test(a)["t-статистика (ADF)"]
+    assert t < -10  # доходности сильно стационарнее случайного блуждания
+
+
 # --------------------------------------------------------------------- #
-# Монте-Карло (таблица 9)
+# Монте-Карло
 # --------------------------------------------------------------------- #
 def test_monte_carlo_deterministic():
     a = make_asset(seed=2)
@@ -134,7 +174,7 @@ def test_monte_carlo_deterministic():
     assert len(s1) == 3
     for k in s1:
         assert s1[k].shape == (200,)
-        assert np.array_equal(s1[k], s2[k])  # seed один - результат тот же
+        assert np.array_equal(s1[k], s2[k])  # одинаковый seed - тот же результат
 
 
 def test_monte_carlo_table():

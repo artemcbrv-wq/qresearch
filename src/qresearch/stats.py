@@ -1,4 +1,4 @@
-"""Описательные статистики дневных доходностей (таблицы 7 и 8 отчёта)."""
+"""Описательные статистики дневных и календарно-годовых доходностей."""
 from __future__ import annotations
 
 import numpy as np
@@ -8,7 +8,7 @@ from ._core import ensure_list, to_asset
 
 
 def daily_stats(x) -> pd.Series:
-    """Полный набор статистик одного ряда (строки таблицы 7 отчёта).
+    """Полный набор описательных статистик дневных доходностей актива.
 
     Работает с любым входом: тикер, ``Asset``, Series/DataFrame.
     """
@@ -18,7 +18,7 @@ def daily_stats(x) -> pd.Series:
     d = a.dates
     opy = a.opy
 
-    s = {}
+    s: dict = {}
     s["Период"] = f"{d[0].date()} - {d[-1].date()}"
     s["Наблюдений (дней)"] = int(len(r))
     s["Средняя годовая (арифметическая), %"] = round(
@@ -41,13 +41,14 @@ def daily_stats(x) -> pd.Series:
     s["Избыточный эксцесс"] = round(float(pd.Series(r).kurt()), 3)
     s["Доля отрицательных дней, %"] = round(float((r < 0).mean() * 100), 2)
     for q, tag in ((5, "95"), (1, "99")):
-        v = float(np.percentile(r, q))
-        s[f"VaR {tag}% исторический, %"] = round(v * 100, 3)
+        var = float(np.percentile(r, q))
+        s[f"VaR {tag}% исторический, %"] = round(var * 100, 3)
         s[f"CVaR {tag}% исторический, %"] = round(
-            float(r[r <= v].mean() * 100), 3
+            float(r[r <= var].mean() * 100), 3
         )
+    window = min(63, len(r))  # на короткой истории окно сжимается
     s["Макс. скользящая волатильность (63 дн.), %"] = round(
-        float(pd.Series(r).rolling(63).std().max() * np.sqrt(opy) * 100), 3
+        float(pd.Series(r).rolling(window).std().max() * np.sqrt(opy) * 100), 3
     )
     # Максимальная просадка и восстановление
     peak = np.maximum.accumulate(p)
@@ -71,7 +72,7 @@ def daily_stats(x) -> pd.Series:
 
 
 def stats_table(tickers) -> pd.DataFrame:
-    """Таблица 7: статистики всех активов рядом (колонки - активы)."""
+    """Описательные статистики всех активов рядом (колонки - активы)."""
     assets = [to_asset(t) for t in ensure_list(tickers)]
     return pd.DataFrame({a.name: daily_stats(a) for a in assets})
 
@@ -102,7 +103,7 @@ def sortino(x) -> float:
     a = to_asset(x)
     r = a.returns
     downside = r[r < 0].std(ddof=1)
-    if not downside or downside == 0:
+    if not np.isfinite(downside) or downside == 0:
         return float("inf")
     return float((r.mean() * a.opy) / (downside * np.sqrt(a.opy)))
 
@@ -135,19 +136,24 @@ def annual_returns(x) -> pd.Series:
 
 
 def annual_table(tickers) -> pd.DataFrame:
-    """Таблица 8: годовые доходности всех активов рядом."""
+    """Годовые доходности всех активов рядом."""
     assets = [to_asset(t) for t in ensure_list(tickers)]
     return pd.DataFrame({a.name: annual_returns(a) for a in assets})
 
 
 def annual_stats(x) -> pd.Series:
-    """Статистики годовых доходностей по ПОЛНЫМ годам (таблица 8)."""
+    """Статистики годовых доходностей по полным календарным годам.
+
+    Неполный последний год не участвует в статистиках, как и первый
+    год, если история начинается со второй его половины.
+    """
     a = to_asset(x)
     ann = annual_returns(a)
-    # Неполный последний год не участвует в статистиках.
-    end = a.dates[-1]
-    if end.month < 12:
+    start, end = a.dates[0], a.dates[-1]
+    if not (end.month == 12 and end.day == 31):
         ann = ann[ann.index != end.year]
+    if start.month > 6:
+        ann = ann[ann.index != start.year]
     if ann.empty:
         return pd.Series(
             {"Полных лет": 0, "Средняя, %": float("nan"),

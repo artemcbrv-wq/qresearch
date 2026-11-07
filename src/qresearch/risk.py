@@ -27,9 +27,7 @@ def var(x, level: float = 95, method: str = "hist") -> float:
     if method in ("parametric", "normal", "n"):
         z = _sps.norm.ppf(level / 100)
         return float(mu - z * sd)
-    raise ValueError(
-        f"Неизвестный метод VaR: {method!r} (используйте hist/parametric)."
-    )
+    raise ValueError(f"Неизвестный метод VaR: {method!r} (используйте hist/parametric).")
 
 
 def cvar(x, level: float = 95, method: str = "hist") -> float:
@@ -45,9 +43,7 @@ def cvar(x, level: float = 95, method: str = "hist") -> float:
         alpha = 1 - level / 100
         z = _sps.norm.ppf(level / 100)
         return float(mu - sd * _sps.norm.pdf(z) / alpha)
-    raise ValueError(
-        f"Неизвестный метод CVaR: {method!r} (используйте hist/parametric)."
-    )
+    raise ValueError(f"Неизвестный метод CVaR: {method!r} (используйте hist/parametric).")
 
 
 def drawdown(x) -> pd.Series:

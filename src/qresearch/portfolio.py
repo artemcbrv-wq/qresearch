@@ -53,6 +53,7 @@ class Portfolio:
 
     @property
     def opy(self) -> float:
+        """Наблюдений в год по общему периоду портфеля."""
         days = (self.rets.index[-1] - self.rets.index[0]).days
         years = max(days / 365.25, 1e-9)
         return len(self.rets) / years
@@ -70,9 +71,7 @@ class Portfolio:
             {
                 "Доходность (CAGR), %": round(cagr * 100, 2),
                 "Волатильность, %": round(vol * 100, 2),
-                "Шарп (rf = 0), годовых": (
-                    round(cagr / vol, 2) if vol > 0 else np.inf
-                ),
+                "Шарп (rf = 0), годовых": round(cagr / vol, 2) if vol > 0 else np.inf,
             },
             name="Портфель",
         )

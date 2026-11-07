@@ -1,4 +1,4 @@
-"""Монте-Карло: моделируем годовую доходность тремя способами (таблица 9).
+"""Монте-Карло: моделируем годовую доходность тремя способами.
 
 1. iid-бутстреп - каждый день года берём наугад из истории независимо;
 2. блочный бутстреп - наугад берём целые куски по ``block`` дней подряд,
@@ -26,7 +26,7 @@ def monte_carlo(x, days: int = 252, n_sims: int = 20_000, seed: int = 42,
     a = to_asset(x)
     r = a.returns.to_numpy()
     n = len(r)
-    out = {}
+    out: dict = {}
 
     # --- Метод 1: iid-бутстреп (дни независимо и с возвращением) ---
     rng = np.random.default_rng(seed)
@@ -52,7 +52,7 @@ def monte_carlo(x, days: int = 252, n_sims: int = 20_000, seed: int = 42,
 
 
 def mc_summary(sims) -> pd.Series:
-    """Строка таблицы 9: вероятность убытка, среднее, сигма и перцентили, %."""
+    """Сводка по симуляциям: вероятность убытка, среднее, сигма и перцентили, %."""
     sims = np.asarray(sims)
     return pd.Series(
         {
@@ -70,7 +70,7 @@ def mc_summary(sims) -> pd.Series:
 
 def monte_carlo_table(x, days: int = 252, n_sims: int = 20_000,
                       seed: int = 42, block: int = 21) -> pd.DataFrame:
-    """Таблица 9: итоги Монте-Карло по всем трём методам."""
+    """Сводная таблица Монте-Карло по всем трём методам."""
     sims = monte_carlo(x, days=days, n_sims=n_sims, seed=seed, block=block)
     return pd.DataFrame(
         {k: mc_summary(v) for k, v in sims.items()}

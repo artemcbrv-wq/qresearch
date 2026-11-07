@@ -43,8 +43,7 @@ def plot_returns(x):
     ax = _axes()
     for i, a in enumerate(assets):
         ax.plot(a.returns.index, a.returns * 100,
-                color=_COLORS[i % len(_COLORS)], lw=0.7, alpha=0.8,
-                label=a.name)
+                color=_COLORS[i % len(_COLORS)], lw=0.7, alpha=0.8, label=a.name)
     ax.set_title("Дневные доходности, %")
     ax.set_ylabel("%")
     ax.grid(alpha=0.3)
@@ -53,7 +52,7 @@ def plot_returns(x):
 
 
 def plot_histogram(x, bins: int = 80):
-    """Гистограмма дневных доходностей с наложенными нормалью и t."""
+    """Гистограмма дневных доходностей с наложенными нормалью и t-распределением."""
     a = to_asset(x)
     r = a.returns.to_numpy()
     ax = _axes()
@@ -65,8 +64,7 @@ def plot_histogram(x, bins: int = 80):
     try:
         df_t, loc_t, scale_t = _sps.t.fit(r)
         ax.plot(grid, _sps.t.pdf(grid, df_t, loc_t, scale_t),
-                color="crimson", lw=1.2,
-                label=f"t-распределение (df={df_t:.0f})")
+                color="crimson", lw=1.2, label=f"t-распределение (df={df_t:.0f})")
     except Exception:  # t.fit редкие сбои не должны ломать график
         pass
     ax.set_title(f"Гистограмма дневных доходностей: {a.name}")

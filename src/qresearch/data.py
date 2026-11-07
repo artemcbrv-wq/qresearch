@@ -1,7 +1,8 @@
-"""Загрузка данных: МосБиржа (ISS), Yahoo Finance и локальные файлы.
+"""Загрузка данных: МосБиржа (ISS API) и локальные CSV/Excel файлы.
 
-Источник выбирается автоматически по тикеру: сначала пробуется публичный
-API МосБиржи, затем Yahoo Finance. Результаты кэшируются в памяти.
+Тикеры акций и индексов МосБиржи загружаются с публичного API iss.moex.com.
+Свои данные читаются из файлов через :func:`load_file`. Загруженные активы
+кэшируются в памяти, поэтому повторные вызовы не ходят в сеть.
 """
 from __future__ import annotations
 
@@ -19,26 +20,16 @@ _CACHE: dict = {}
 
 # Известные индексы МосБиржи: тикер -> (доска торгов, дата начала истории).
 _INDEX_BOARDS = {
-    "RUGBITR5+": ("RTSI", "2010-12-30"),
-    "RUGBITR7Y+": ("RTSI", "2010-12-30"),
-    "RGBITR": ("RTSI", "2010-12-30"),
-    "RUSFARIND": ("RTSI", "2018-01-09"),
     "IMOEX": ("RTSI", "2010-09-22"),
     "RTSI": ("RTSI", "2010-09-22"),
     "MOEXBC": ("RTSI", "2010-12-30"),
-    "MOEX10": ("SNDX", "2003-03-01"),
 }
 
-# Человекочитаемые псевдонимы (в любую функцию можно передать и их).
+# Человекочитаемые псевдонимы индексов (можно передавать в любую функцию).
 INDEX_PRESETS = {
-    "ОФЗ > 5 лет": "RUGBITR5+",
-    "OFZ длинные": "RUGBITR5+",
-    "ОФЗ > 7 лет": "RUGBITR7Y+",
-    "Весь рынок ОФЗ": "RGBITR",
-    "Денежный рынок": "RUSFARIND",
     "Индекс МосБиржи": "IMOEX",
-    "MOEX Blue Chips": "MOEXBC",
     "Индекс РТС": "RTSI",
+    "MOEX Blue Chips": "MOEXBC",
 }
 
 _ENCODINGS = ("utf-8-sig", "utf-8", "cp1251")
@@ -98,8 +89,8 @@ def load_moex(ticker: str, start=None, end=None, board=None, name=None) -> Asset
     Параметры
     ----------
     ticker :
-        Тикер МосБиржи (например, ``"SBER"`` или ``"RUGBITR5+"``) или
-        псевдоним из :data:`INDEX_PRESETS`.
+        Тикер МосБиржи (например, ``"SBER"``, ``"IMOEX"``) или псевдоним
+        из :data:`INDEX_PRESETS`.
     start, end :
         Границы периода в формате ``"ГГГГ-ММ-ДД"``.
     board :
@@ -116,7 +107,7 @@ def load_moex(ticker: str, start=None, end=None, board=None, name=None) -> Asset
         f"{_MOEX_BASE}/history/engines/{engine}/markets/{market}"
         f"/boards/{board_id}/securities/{urllib.parse.quote(ticker)}.json"
     )
-    frames = []
+    frames: list[pd.DataFrame] = []
     cursor = 0
     while True:
         params = urllib.parse.urlencode(
@@ -143,24 +134,6 @@ def load_moex(ticker: str, start=None, end=None, board=None, name=None) -> Asset
     rows = pd.concat(frames, ignore_index=True)
     df = pd.DataFrame({DATE_COL: rows["TRADEDATE"], PRICE_COL: rows["CLOSE"]})
     return Asset(df, name=name or ticker)
-
-
-def load_yahoo(ticker: str, start=None, end=None, name=None) -> Asset:
-    """История тикера с Yahoo Finance (нужен пакет yfinance)."""
-    try:
-        import yfinance as yf
-    except ImportError as e:  # pragma: no cover
-        raise ImportError(
-            "Для загрузки с Yahoo Finance установите yfinance: "
-            "pip install yfinance"
-        ) from e
-    df = yf.download(ticker, start=start, end=end, progress=False, auto_adjust=True)
-    if df is None or df.empty:
-        raise ValueError(f"Yahoo Finance не вернул данных для «{ticker}».")
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
-    series = df["Close"].dropna()
-    return Asset(series, name=name or ticker)
 
 
 def load_file(path, date_col=None, price_col=None, name=None) -> Asset:
@@ -206,10 +179,11 @@ def _cache_put(key, asset):
 
 
 def load(x, start=None, end=None, name=None) -> Asset:
-    """Загружает актив по тикеру: сначала МосБиржа, затем Yahoo Finance.
+    """Загружает актив с МосБиржи по тикеру (с кэшированием в памяти).
 
-    Работает и с ``Asset``/``pd.Series``/``pd.DataFrame`` (проходят насквозь),
-    и с псевдонимами из :data:`INDEX_PRESETS`. Результат кэшируется.
+    Работает и с ``Asset``/``pd.Series``/``pd.DataFrame`` (проходят
+    насквозь без изменений), и с псевдонимами из :data:`INDEX_PRESETS`.
+    Для своих данных из файла используйте :func:`load_file`.
     """
     from ._core import to_asset
 
@@ -223,14 +197,11 @@ def load(x, start=None, end=None, name=None) -> Asset:
         return _CACHE[key]
     try:
         asset = load_moex(ticker, start=start, end=end, name=name)
-    except Exception:
-        try:
-            asset = load_yahoo(ticker, start=start, end=end, name=name)
-        except Exception as e_yahoo:
-            raise ValueError(
-                f"Не удалось загрузить «{ticker}» ни с МосБиржи, ни с Yahoo "
-                "Finance. Проверьте тикер или загрузите файл через "
-                f"qr.load_file(...). Yahoo: {e_yahoo}"
-            ) from e_yahoo
+    except Exception as e:
+        raise ValueError(
+            f"Не удалось загрузить «{ticker}» с МосБиржи. Проверьте тикер "
+            "и доступность iss.moex.com, либо загрузите свои данные из "
+            f"файла через qr.load_file(...). Причина: {e}"
+        ) from e
     _cache_put(key, asset)
     return asset

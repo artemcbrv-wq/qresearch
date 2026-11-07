@@ -145,8 +145,8 @@ def _clean(df: pd.DataFrame) -> pd.DataFrame:
 def to_asset(x, name: str | None = None) -> Asset:
     """Превращает тикер/Series/DataFrame/Asset в :class:`Asset`.
 
-    Строка загружается автоматически (сначала МосБиржа, затем Yahoo
-    Finance). ``Asset`` возвращается как есть.
+    Строка загружается с МосБиржи через :func:`qresearch.data.load`.
+    ``Asset`` возвращается как есть.
     """
     if isinstance(x, Asset):
         return x
