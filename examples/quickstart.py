@@ -16,8 +16,19 @@ result = qr.report(["SBER", "GAZP"], n_sims=10_000)
 # result["annual"]      - годовые доходности
 # result["monte_carlo"] - Монте-Карло по каждому активу
 
-# Ключевые метрики без лишнего:
-print(qr.quick(["SBER", "GAZP", "IMOEX"]))
+# Ключевые метрики таблицей-картинкой (plot=False - текстом, как раньше):
+qr.quick(["SBER", "GAZP", "IMOEX"])
+
+# Одно число одной командой - без лишних таблиц и выводов:
+print(qr.cagr("SBER"))            # годовая доходность, например 0.0834
+print(qr.volatility("SBER"))      # годовая волатильность
+print(qr.sharpe("SBER"))           # Шарп
+
+# Только Монте-Карло: таблица и картинка:
+qr.plot_table(qr.monte_carlo_table("SBER", n_sims=10_000))
+qr.plot_monte_carlo("SBER")
+
+# Просадка с датами и VaR:
 print(qr.drawdown_info("SBER"))
 print(qr.var("SBER", level=99))
 

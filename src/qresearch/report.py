@@ -18,11 +18,15 @@ def _fmt_frame(df) -> str:
     return df.to_string(na_rep="-")
 
 
-def quick(x) -> pd.DataFrame:
-    """Ключевые метрики по каждому активу: одна таблица на экран.
+def quick(x, plot: bool = True) -> pd.DataFrame:
+    """Ключевые метрики по каждому активу: одна таблица.
 
-    Печатает и возвращает DataFrame (колонки - активы).
+    По умолчанию рисует таблицу метрик как картинку matplotlib (без
+    текстового вывода). ``plot=False`` - прежнее поведение: печатать
+    текстом. В любом случае возвращает DataFrame (колонки - активы).
     """
+    from .plots import plot_table
+
     assets = [to_asset(t) for t in ensure_list(x)]
     rows = {}
     for a in assets:
@@ -44,8 +48,11 @@ def quick(x) -> pd.DataFrame:
             "Макс. просадка, %": round(float(max_drawdown(a)) * 100, 2),
         }
     out = pd.DataFrame(rows)
-    print("qresearch: ключевые метрики\n" + "-" * 60)
-    print(_fmt_frame(out))
+    if plot:
+        plot_table(out, title="qresearch: ключевые метрики")
+    else:
+        print("qresearch: ключевые метрики\n" + "-" * 60)
+        print(_fmt_frame(out))
     return out
 
 

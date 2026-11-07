@@ -157,7 +157,9 @@ def _fetch_pages(url: str, base_params: dict, block: str,
         page = _iss_block(js, block)
         if page.empty:
             break
-        frames.append(page)
+        clean = _page_dates_prices(page)
+        if not clean.empty:
+            frames.append(clean)  # чистые страницы: без пустых и NA-колонок
         cursor += len(page)
         cur = _iss_block(js, cursor_block, required=False)
         if not cur.empty and cur.shape[1] > 1:
@@ -171,13 +173,17 @@ def _fetch_pages(url: str, base_params: dict, block: str,
             break
     if not frames:
         raise _EmptyHistory(f"«{block}»: история пуста")
-    return pd.concat(frames, ignore_index=True)
+    out = pd.concat(frames, ignore_index=True)
+    out = out.drop_duplicates(subset=DATE_COL).reset_index(drop=True)
+    if out.empty:
+        raise _EmptyHistory("нет строк с ценой закрытия")
+    return out
 
 
-def _df_dates_prices(rows: pd.DataFrame) -> pd.DataFrame:
-    """Оставляет из ISS-ответа только дату торгов и цену закрытия."""
-    dates = _pick(rows, "TRADEDATE", "end", "begin")
-    prices = _pick(rows, "CLOSE", "lastprice")
+def _page_dates_prices(page: pd.DataFrame) -> pd.DataFrame:
+    """Оставляет из одной страницы ISS-ответа дату и цену закрытия."""
+    dates = _pick(page, "TRADEDATE", "end", "begin")
+    prices = _pick(page, "CLOSE", "lastprice")
     if dates is None or prices is None:
         raise _EmptyHistory("в ответе нет колонок с датой и ценой закрытия")
     df = pd.DataFrame(
@@ -186,10 +192,7 @@ def _df_dates_prices(rows: pd.DataFrame) -> pd.DataFrame:
             PRICE_COL: pd.to_numeric(prices, errors="coerce"),
         }
     )
-    df = df.dropna().drop_duplicates(subset=DATE_COL).reset_index(drop=True)
-    if df.empty:
-        raise _EmptyHistory("нет строк с ценой закрытия")
-    return df
+    return df.dropna().drop_duplicates(subset=DATE_COL)
 
 
 def _fetch_history(ticker: str, engine: str, market: str, board: str,
@@ -203,7 +206,7 @@ def _fetch_history(ticker: str, engine: str, market: str, board: str,
     if end:
         params["till"] = end
     rows = _fetch_pages(url, params, "history", "history.cursor")
-    return _df_dates_prices(rows)
+    return rows
 
 
 def _fetch_candles(ticker: str, engine: str, market: str, start, end,
@@ -217,7 +220,7 @@ def _fetch_candles(ticker: str, engine: str, market: str, start, end,
     if end:
         params["till"] = end
     rows = _fetch_pages(url, params, "candles", "candles.cursor")
-    return _df_dates_prices(rows)
+    return rows
 
 
 def _moex_candidates(ticker: str) -> list:

@@ -205,3 +205,48 @@ def test_portfolio():
     assert abs(rc.sum() - 100) < 1.0
     mv = p.min_variance()
     assert abs(mv.sum() - 1) < 1e-6
+
+
+# --------------------------------------------------------------------- #
+# Визуализация: таблицы-картинки и Монте-Карло графиком
+# --------------------------------------------------------------------- #
+def test_plot_table_renders_dataframe():
+    a = make_asset(seed=9, name="V")
+    ax = qr.plot_table(qr.stats_table(a))
+    assert ax is not None
+    import matplotlib.pyplot as plt
+    plt.close("all")
+
+
+def test_plot_table_renders_series_with_title():
+    ax = qr.plot_table(qr.monte_carlo_table(make_asset(seed=9), n_sims=100),
+                       title="Монте-Карло")
+    assert ax is not None
+    import matplotlib.pyplot as plt
+    plt.close("all")
+
+
+def test_plot_monte_carlo_figure():
+    a = make_asset(seed=5)
+    ax = qr.plot_monte_carlo(a, n_sims=200, seed=1)
+    assert ax is not None
+    import matplotlib.pyplot as plt
+    plt.close("all")
+
+
+def test_quick_plot_returns_dataframe():
+    df = qr.quick(make_asset(seed=3, name="Q"), plot=False)
+    assert "CAGR (геометрическая), %" in df.index
+    df2 = qr.quick(make_asset(seed=3, name="Q"), plot=True)
+    assert df2.shape == df.shape
+    import matplotlib.pyplot as plt
+    plt.close("all")
+
+
+def test_single_metrics_return_numbers():
+    a = make_asset(seed=11, drift=0.0004, vol=0.02)
+    assert isinstance(qr.cagr(a), float)
+    assert qr.volatility(a) > 0
+    assert abs(qr.sharpe(a) - (qr.cagr(a) / qr.volatility(a))) < 0.5
+    assert qr.max_drawdown(a) <= 0
+    assert -1 < qr.var(a, level=95) < 0

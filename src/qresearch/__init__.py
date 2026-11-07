@@ -13,12 +13,23 @@
     c = qr.load_file("цены.csv")  # свой CSV/Excel файл
 
 Анализ одной командой (в любую функцию можно передавать тикеры напрямую):
-    qr.quick("SBER")                     # ключевые метрики
+    qr.quick("SBER")                     # ключевые метрики (таблица-картинка)
     qr.stats_table(["SBER", "GAZP"])     # все описательные статистики
     qr.annual_table("IMOEX")             # доходности по годам
     qr.diagnostics("SBER")               # нормальность, кластеризация, стационарность
     qr.monte_carlo_table("SBER")         # Монте-Карло
     qr.report("SBER")                    # всё сразу + графики
+
+Одно число одной командой (без лишних таблиц и выводов):
+    qr.cagr("SBER")          # годовая доходность, например 0.0834
+    qr.volatility("SBER")    # годовая волатильность
+    qr.sharpe("SBER")        # Шарп; ещё есть sortino, calmar
+    qr.var("SBER", 95)       # VaR; ещё есть cvar, max_drawdown
+
+Таблицы и Монте-Карло картинками matplotlib:
+    qr.quick(["SBER", "GAZP"])                     # метрики таблицей-картинкой
+    qr.plot_table(qr.stats_table("SBER"))          # любой DataFrame таблицей
+    qr.plot_monte_carlo("SBER")                     # гистограмма симуляций года
 
 Риск и портфели:
     qr.var("SBER", level=95)             # VaR (доля единицы)
@@ -50,9 +61,11 @@ from .plots import (
     plot_drawdown,
     plot_growth,
     plot_histogram,
+    plot_monte_carlo,
     plot_qq,
     plot_returns,
     plot_rolling_vol,
+    plot_table,
 )
 from .portfolio import Portfolio, portfolio
 from .report import quick, report
@@ -92,6 +105,7 @@ __all__ = [
     # графики
     "plot_growth", "plot_returns", "plot_histogram", "plot_qq",
     "plot_drawdown", "plot_rolling_vol", "plot_annual", "plot_all",
+    "plot_table", "plot_monte_carlo",
     # отчёты
     "report", "quick",
 ]

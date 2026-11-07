@@ -6,6 +6,7 @@ import pandas as pd
 from scipy import stats as _sps
 
 from ._core import ensure_list, to_asset
+from .montecarlo import monte_carlo as _monte_carlo
 from .risk import drawdown, rolling_vol
 from .stats import annual_returns
 
@@ -123,6 +124,74 @@ def plot_annual(x):
     ax.set_title(f"Годовые доходности: {a.name}")
     ax.set_ylabel("%")
     ax.grid(alpha=0.3, axis="y")
+    return ax
+
+
+def plot_monte_carlo(x, n_sims: int = 20_000, days: int = 252, seed: int = 42,
+                     block: int = 21, bins: int = 60):
+    """Гистограмма смоделированных годовых доходностей (iid-бутстреп).
+
+    Помечены перцентили P5, P50 и P95: например, «P5 = -12%» читается
+    как «в 5% симуляций год оказался хуже -12%».
+    """
+    a = to_asset(x)
+    sims = _monte_carlo(a, days=days, n_sims=n_sims, seed=seed,
+                        block=block)["iid-бутстреп"] * 100
+    ax = _axes()
+    ax.hist(sims, bins=bins, color="tab:blue", alpha=0.6, density=True,
+            label="Симуляции года")
+    for q, color in ((5, "crimson"), (50, "tab:orange"), (95, "tab:green")):
+        v = float(np.percentile(sims, q))
+        ax.axvline(v, color=color, lw=1.4, ls="--",
+                   label=f"P{q} = {v:.1f}%")
+    ax.axvline(0, color="k", lw=0.8)
+    ax.set_title(f"Монте-Карло: годовая доходность, {a.name}")
+    ax.set_xlabel("Годовая доходность, %")
+    ax.set_ylabel("Плотность")
+    ax.grid(alpha=0.3)
+    ax.legend()
+    return ax
+
+
+def plot_table(data, title: str = "", fontsize: int = 10):
+    """Рисует DataFrame или Series как таблицу - картинку matplotlib.
+
+    Пригодится для отчётов и скриншотов: вместо текстового вывода
+    получается аккуратная таблица. NaN показывается прочерком::
+
+        qr.plot_table(qr.stats_table("SBER"))
+        qr.plot_table(qr.monte_carlo_table("SBER"))
+    """
+    import matplotlib.pyplot as plt
+
+    if isinstance(data, pd.Series):
+        df = data.to_frame()
+    else:
+        df = data.copy()
+    df = df.reset_index()  # индекс становится первой колонкой таблицы
+    df.columns = [""] + [str(c) for c in df.columns[1:]]
+    shown = df.where(df.notna(), "-")
+    cells = shown.astype(str).values.tolist()
+    n_rows, n_cols = len(cells), len(cells[0])
+
+    width = min(max(4.0 + 2.6 * n_cols, 7.0), 16.0)
+    height = min(1.6 + 0.5 * n_rows, 22.0)
+    fig, ax = plt.subplots(figsize=(width, height))
+    ax.axis("off")
+    if title:
+        ax.set_title(title, fontsize=13, fontweight="bold", pad=14)
+    tbl = ax.table(cellText=cells, cellLoc="center", loc="center")
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(fontsize)
+    for (r, _), cell in tbl.get_celld().items():
+        cell.set_height(cell.get_height() * 1.5)
+        if r == 0:
+            cell.set_facecolor("#dce6f5")
+            cell.set_text_props(fontweight="bold")
+    try:
+        tbl.auto_set_column_width(col=list(range(n_cols)))
+    except Exception:  # старые matplotlib - ширины остаются равными
+        pass
     return ax
 
 
