@@ -18,6 +18,16 @@ from ._core import Asset, DATE_COL, PRICE_COL
 _MOEX_BASE = "https://iss.moex.com/iss"
 _CACHE: dict = {}
 
+# Браузерные заголовки: защита ISS отклоняет запросы с небраузерным
+# User-Agent (например, "qresearch/0.1.0"), возвращая JSON без данных.
+_HTTP_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json, text/plain, */*",
+}
+
 # Известные индексы МосБиржи: тикер -> (доска торгов, дата начала истории).
 _INDEX_BOARDS = {
     "IMOEX": ("RTSI", "2010-09-22"),
@@ -31,6 +41,13 @@ INDEX_PRESETS = {
     "Индекс РТС": "RTSI",
     "MOEX Blue Chips": "MOEXBC",
 }
+
+# Запасные доски торгов на случай, если определить основную не удалось.
+_FALLBACK_BOARDS = (
+    ("stock", "shares", "TQBR"),   # акции
+    ("stock", "index", "RTSI"),    # индексы
+    ("stock", "bonds", "TQOB"),    # облигации
+)
 
 _ENCODINGS = ("utf-8-sig", "utf-8", "cp1251")
 _SEPARATORS = (",", ";", "\t")
@@ -47,65 +64,43 @@ def _resolve_alias(ticker: str) -> str:
 
 
 def _get_json(url: str) -> dict:
-    req = urllib.request.Request(
-        url, headers={"User-Agent": "qresearch/0.1.0"}
-    )
+    """GET с браузерными заголовками; ответ обязан быть JSON-словарём."""
+    req = urllib.request.Request(url, headers=_HTTP_HEADERS)
     with urllib.request.urlopen(req, timeout=60) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+        raw = resp.read().decode("utf-8", errors="replace")
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as e:
+        snippet = raw[:200].replace("\n", " ")
+        raise ValueError(
+            "МосБиржа вернула не-JSON ответ (вероятно, сработала защита "
+            f"сайта). Начало ответа: {snippet!r}"
+        ) from e
 
 
 def _iss_block(js: dict, name: str) -> pd.DataFrame:
     """Разворачивает блок ISS-ответа (columns + data) в DataFrame."""
-    block = js[name]
+    block = js.get(name)
+    if not isinstance(block, dict) or "columns" not in block:
+        snippet = json.dumps(js, ensure_ascii=False)[:300]
+        raise ValueError(
+            f"Неожиданный ответ МосБиржи: нет блока «{name}». "
+            f"Начало ответа: {snippet!r}"
+        )
     cols = [c["name"] for c in block["columns"]]
     return pd.DataFrame(block["data"], columns=cols)
 
 
-def _moex_resolve(ticker: str):
-    """Определяет (engine, market, board) тикера МосБиржи через /iss/securities."""
-    if ticker in _INDEX_BOARDS:
-        return "stock", "index", _INDEX_BOARDS[ticker][0]
-    js = _get_json(
-        f"{_MOEX_BASE}/securities/{urllib.parse.quote(ticker)}.json"
-    )
-    df = _iss_block(js, "securities")
-    if df.empty:
-        raise ValueError(f"Тикер «{ticker}» не найден на МосБирже.")
-    row = df.iloc[0]
-    group = str(row.get("GROUP", "")).lower()
-    board = str(row.get("PRIMARYBOARDID") or row.get("BOARDID") or "")
-    if "index" in group:
-        return "stock", "index", board or "RTSI"
-    if "shares" in group:
-        return "stock", "shares", board or "TQBR"
-    if "bond" in group:
-        return "stock", "bonds", board or "TQOB"
-    return "stock", "shares", board or "TQBR"
+class _EmptyHistory(Exception):
+    """По этой доске торгов истории нет (пробуем следующую доску)."""
 
 
-def load_moex(ticker: str, start=None, end=None, board=None, name=None) -> Asset:
-    """История тикера с публичного API МосБиржи (ISS) постранично.
-
-    Параметры
-    ----------
-    ticker :
-        Тикер МосБиржи (например, ``"SBER"``, ``"IMOEX"``) или псевдоним
-        из :data:`INDEX_PRESETS`.
-    start, end :
-        Границы периода в формате ``"ГГГГ-ММ-ДД"``.
-    board :
-        Код доски торгов; по умолчанию определяется автоматически.
-    """
-    ticker = _resolve_alias(ticker)
-    engine, market, board_id = _moex_resolve(ticker)
-    if board is not None:
-        board_id = board
-    if start is None:
-        start = _INDEX_BOARDS.get(ticker, ("", "2010-01-01"))[1]
-
+def _fetch_history(ticker: str, engine: str, market: str, board: str,
+                   start, end) -> pd.DataFrame:
+    """Постранично скачивает историю с одной доски торгов."""
     base = (
         f"{_MOEX_BASE}/history/engines/{engine}/markets/{market}"
-        f"/boards/{board_id}/securities/{urllib.parse.quote(ticker)}.json"
+        f"/boards/{board}/securities/{urllib.parse.quote(ticker)}.json"
     )
     frames: list[pd.DataFrame] = []
     cursor = 0
@@ -119,21 +114,81 @@ def load_moex(ticker: str, start=None, end=None, board=None, name=None) -> Asset
             break
         frames.append(page)
         cursor += len(page)
-        cur = js.get("history.cursor", {}).get("data", [])
-        total = int(cur[0][1]) if cur and len(cur[0]) > 1 else 0
+        cur = js.get("history.cursor")
+        data = cur.get("data", []) if isinstance(cur, dict) else []
+        total = int(data[0][1]) if data and len(data[0]) > 1 else 0
         if total and cursor >= total:
             break
         if len(page) < 100:  # страница меньше максимальной - данные кончились
             break
-
     if not frames:
-        raise ValueError(
-            f"МосБиржа не вернула данных для «{ticker}». Проверьте тикер, "
-            "доску торгов и период."
+        raise _EmptyHistory(f"{board}: история пуста")
+    return pd.concat(frames, ignore_index=True)
+
+
+def _moex_candidates(ticker: str) -> list:
+    """Возможные (engine, market, board) для тикера, от лучших к запасным."""
+    if ticker in _INDEX_BOARDS:
+        return [("stock", "index", _INDEX_BOARDS[ticker][0])]
+    try:
+        js = _get_json(
+            f"{_MOEX_BASE}/securities/{urllib.parse.quote(ticker)}.json"
+            "?iss.only=securities&iss.meta=off"
         )
-    rows = pd.concat(frames, ignore_index=True)
-    df = pd.DataFrame({DATE_COL: rows["TRADEDATE"], PRICE_COL: rows["CLOSE"]})
-    return Asset(df, name=name or ticker)
+        df = _iss_block(js, "securities")
+        if not df.empty:
+            row = df.iloc[0]
+            group = str(row.get("GROUP", "")).lower()
+            board = str(row.get("PRIMARYBOARDID") or row.get("BOARDID") or "")
+            if "index" in group:
+                return [("stock", "index", board or "RTSI")]
+            if "bond" in group:
+                return [("stock", "bonds", board or "TQOB")]
+            return [("stock", "shares", board or "TQBR")]
+    except Exception:
+        pass  # разведка не удалась: переберём типовые доски торгов
+    return list(_FALLBACK_BOARDS)
+
+
+def load_moex(ticker: str, start=None, end=None, board=None, name=None) -> Asset:
+    """История тикера с публичного API МосБиржи (ISS) постранично.
+
+    Параметры
+    ----------
+    ticker :
+        Тикер МосБиржи (например, ``"SBER"``, ``"IMOEX"``) или псевдоним
+        из :data:`INDEX_PRESETS`.
+    start, end :
+        Границы периода в формате ``"ГГГГ-ММ-ДД"``.
+    board :
+        Код доски торгов; по умолчанию определяется автоматически
+        (если не удалось - перебираются типовые доски).
+    """
+    ticker = _resolve_alias(ticker)
+    if start is None:
+        start = _INDEX_BOARDS.get(ticker, ("", "2010-01-01"))[1]
+
+    candidates = _moex_candidates(ticker)
+    if board is not None:
+        candidates = [(candidates[0][0], candidates[0][1], board)]
+
+    errors: list[str] = []
+    for engine, market, board_id in candidates:
+        try:
+            rows = _fetch_history(ticker, engine, market, board_id, start, end)
+        except _EmptyHistory as e:
+            errors.append(str(e))
+            continue
+        except Exception as e:
+            errors.append(f"{board_id}: {e}")
+            continue
+        df = pd.DataFrame({DATE_COL: rows["TRADEDATE"], PRICE_COL: rows["CLOSE"]})
+        return Asset(df, name=name or ticker)
+
+    raise ValueError(
+        f"МосБиржа не вернула данных для «{ticker}». Попытки: "
+        + "; ".join(errors)
+    )
 
 
 def load_file(path, date_col=None, price_col=None, name=None) -> Asset:
@@ -199,9 +254,8 @@ def load(x, start=None, end=None, name=None) -> Asset:
         asset = load_moex(ticker, start=start, end=end, name=name)
     except Exception as e:
         raise ValueError(
-            f"Не удалось загрузить «{ticker}» с МосБиржи. Проверьте тикер "
-            "и доступность iss.moex.com, либо загрузите свои данные из "
-            f"файла через qr.load_file(...). Причина: {e}"
+            f"Не удалось загрузить «{ticker}»: {e}. "
+            "Свои данные можно загрузить через qr.load_file(...)."
         ) from e
     _cache_put(key, asset)
     return asset
